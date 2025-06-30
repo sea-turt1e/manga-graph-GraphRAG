@@ -1,0 +1,2 @@
+- 「PEP 8 – Style Guide for Python Code」に従って書いてください。
+  - PEP 8 – Style Guide for Python Code: https://peps.python.org/pep-0008/
