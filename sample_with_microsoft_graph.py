@@ -1,4 +1,3 @@
-# graphrag_implementation.py
 import os
 from typing import Any, Dict, List
 
@@ -176,7 +175,7 @@ Cypherクエリ:
         # 中間ステップから推薦理由を抽出
         cypher_query = "クエリ情報なし"
         database_results = []
-        
+
         # resultが辞書形式で中間ステップを含む場合
         if isinstance(result, dict):
             # intermediate_stepsの取得を試みる
@@ -190,7 +189,7 @@ Cypherクエリ:
                     elif isinstance(step, tuple) and len(step) > 0:
                         cypher_query = str(step[0])
                         break
-                
+
                 # データベース結果の取得
                 for step in intermediate_steps:
                     if isinstance(step, dict) and "context" in step:
@@ -199,7 +198,7 @@ Cypherクエリ:
                     elif isinstance(step, tuple) and len(step) > 1:
                         database_results = step[1]
                         break
-            
+
             # もしintermediate_stepsがない場合、他のキーを探す
             if not intermediate_steps:
                 # 可能性のあるキー名
@@ -207,7 +206,7 @@ Cypherクエリ:
                     if key in result:
                         cypher_query = result[key]
                         break
-                
+
                 for key in ["context", "graph_data", "results"]:
                     if key in result:
                         database_results = result[key]
@@ -298,7 +297,9 @@ def demo_graphrag():
         print("推薦作品:", result["recommendation"])
         print("\n推薦理由:", result["reasoning"])
         print("\n使用したCypherクエリ:", result["cypher_query"])
-        print("\nグラフデータ数:", len(result["graph_data"]) if isinstance(result["graph_data"], list) else "データなし")
+        print(
+            "\nグラフデータ数:", len(result["graph_data"]) if isinstance(result["graph_data"], list) else "データなし"
+        )
 
         # 作者の系譜を調査
         lineage_result = graphrag.qa_chain.invoke({"query": "岸本斉史の作品と、同じ系譜の作者の作品を教えてください"})
@@ -327,7 +328,7 @@ def demo_graphrag():
         print(
             "使用したクエリ: MATCH (m:Manga)-[:SIMILAR_TO]-(similar:Manga) WHERE m.title CONTAINS 'NARUTO' RETURN similar LIMIT 20"
         )
-        
+
         # デバッグ情報
         print("\n=== デバッグ情報 ===")
         print(f"エラータイプ: {type(e).__name__}")
