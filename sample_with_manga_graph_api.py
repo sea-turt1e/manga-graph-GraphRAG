@@ -14,6 +14,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+import ipdb
 import requests
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
@@ -149,11 +150,11 @@ class MangaGraphClient:
                         if key not in ["name", "title"]:  # Avoid duplicating name/title
                             output.append(f"    {key}: {value}")
 
-        if "relationships" in response:
-            output.append(f"\nRelationships: {response.get('relationship_count', len(response['relationships']))}")
-            for rel in response.get("relationships", [])[:5]:  # Show first 5 relationships
+        if "edges" in response:
+            output.append(f"\nRelationships: {response.get('relationship_count', len(response['edges']))}")
+            for rel in response.get("edges", [])[:5]:  # Show first 5 relationships
                 output.append(
-                    f"  - {rel.get('type', 'UNKNOWN')}: {rel.get('start_node', 'N/A')} -> {rel.get('end_node', 'N/A')}"
+                    f"  - {rel.get('type', 'UNKNOWN')}: {rel.get('source', 'N/A')} -> {rel.get('target', 'N/A')}"
                 )
 
         return "\n".join(output)
@@ -250,13 +251,13 @@ class MangaGraphRAG:
                     }
                 )
 
-        if "relationships" in search_result:
-            for rel in search_result["relationships"]:
+        if "edges" in search_result:
+            for rel in search_result["edges"]:
                 relationships.append(
                     {
                         "type": rel.get("type", "UNKNOWN"),
-                        "source": rel.get("start_node", "N/A"),
-                        "target": rel.get("end_node", "N/A"),
+                        "source": rel.get("source", "N/A"),
+                        "target": rel.get("target", "N/A"),
                     }
                 )
 
@@ -268,7 +269,6 @@ class MangaGraphRAG:
     def recommend_manga(self, user_preference: str) -> Dict[str, Any]:
         """Recommend manga based on user preferences using GraphRAG"""
         print(f"Processing recommendation request: {user_preference}")
-
         # Step 1: Get graph data using neo4j search
         graph_data = self.client.search_neo4j(user_preference, limit=30, include_related=True)
 
@@ -279,17 +279,23 @@ class MangaGraphRAG:
         if "nodes" in graph_data:
             for node in graph_data["nodes"]:
                 # Get node type from labels array
-                node_type = node.get("labels", ["Unknown"])[0]
+                node_type = node.get("type", ["Unknown"])
                 if node_type not in nodes_by_type:
                     nodes_by_type[node_type] = []
                 nodes_by_type[node_type].append(node)
 
-        if "relationships" in graph_data:
-            for rel in graph_data["relationships"]:
+        if "edges" in graph_data:
+            for rel in graph_data["edges"]:
                 rel_type = rel.get("type", "Unknown")
                 if rel_type not in relationships_by_type:
                     relationships_by_type[rel_type] = []
-                relationships_by_type[rel_type].append(rel)
+                __source = ", ".join(
+                    [node.get("label", "N/A") for node in graph_data["nodes"] if node["id"] == rel["source"]]
+                )
+                __target = ", ".join(
+                    [node.get("label", "N/A") for node in graph_data["nodes"] if node["id"] == rel["target"]]
+                )
+                relationships_by_type[rel_type].append({"source": __source, "target": __target})
 
         # Step 3: Build recommendation context from graph structure
         context = self._build_recommendation_context(nodes_by_type, relationships_by_type)
@@ -297,30 +303,31 @@ class MangaGraphRAG:
         # Step 4: Format detailed graph data for LLM
         formatted_data = "取得したグラフデータ:\n\n"
         formatted_data += f"ノード数: {graph_data.get('node_count', len(graph_data.get('nodes', [])))}\n"
-        formatted_data += (
-            f"関係数: {graph_data.get('relationship_count', len(graph_data.get('relationships', [])))}\n\n"
-        )
+        formatted_data += f"関係数: {graph_data.get('relationship_count', len(graph_data.get('edges', [])))}\n\n"
 
         formatted_data += "ノードタイプ別情報:\n"
         for node_type, nodes in nodes_by_type.items():
             formatted_data += f"- {node_type}: {len(nodes)}件\n"
-            for node in nodes[:5]:  # 最初の5件を表示
-                node_name = node.get("name", node.get("title", "N/A"))
+            # for node in nodes[:5]:  # 最初の5件を表示
+            for node in nodes:
+                node_name = node.get("label", "N/A")
                 formatted_data += f"  • {node_name}"
-                if node.get("properties"):
-                    props = []
-                    for k, v in list(node["properties"].items())[:3]:
-                        if v and k not in ["name", "title"]:
-                            props.append(f"{k}: {v}")
-                    if props:
-                        formatted_data += f" ({', '.join(props)})"
+                # ipdb.set_trace()  # Set a breakpoint for debugging
+                # if node.get("properties"):
+                #     props = []
+                #     for k, v in list(node["properties"].items())[:3]:
+                #         if v and k not in ["name", "title"]:
+                #             props.append(f"{k}: {v}")
+                #     if props:
+                #         formatted_data += f" ({', '.join(props)})"
                 formatted_data += "\n"
 
         formatted_data += "\n関係タイプ別情報:\n"
         for rel_type, rels in relationships_by_type.items():
             formatted_data += f"- {rel_type}: {len(rels)}件\n"
-            for rel in rels[:3]:  # 最初の3件を表示
-                formatted_data += f"  • {rel.get('start_node', 'N/A')} → {rel.get('end_node', 'N/A')}\n"
+            # for rel in rels[:3]:  # 最初の3件を表示
+            for rel in rels:
+                formatted_data += f"  • {rel.get('source', 'N/A')} → {rel.get('target', 'N/A')}\n"
 
         # Step 5: Generate recommendation using LLM with graph data
         recommendation = self.recommendation_prompt | self.llm
@@ -479,24 +486,24 @@ def demo_graphrag():
         # Demo examples with ONE PIECE, NARUTO, and るろうに剣心
         demos = [
             {
-                "title": "1. ONE PIECEベースの推薦",
-                "func": lambda: graphrag.recommend_manga("ONE PIECEが好きです。似たような冒険漫画を教えてください。"),
-                "query": "ONE PIECEが好きです。似たような冒険漫画を教えてください。",
+                "title": "レベルE",
+                "func": lambda: graphrag.recommend_manga("レベルE"),
+                "query": "レベルE",
             },
-            {
-                "title": "2. NARUTOベースの推薦",
-                "func": lambda: graphrag.recommend_manga(
-                    "NARUTOが好きです。忍者や友情をテーマにした作品を探しています。"
-                ),
-                "query": "NARUTOが好きです。忍者や友情をテーマにした作品を探しています。",
-            },
-            {
-                "title": "3. るろうに剣心ベースの推薦",
-                "func": lambda: graphrag.recommend_manga(
-                    "るろうに剣心が好きです。歴史物や剣術をテーマにした作品を教えてください。"
-                ),
-                "query": "るろうに剣心が好きです。歴史物や剣術をテーマにした作品を教えてください。",
-            },
+            # {
+            #     "title": "2. NARUTOベースの推薦",
+            #     "func": lambda: graphrag.recommend_manga(
+            #         "NARUTOが好きです。忍者や友情をテーマにした作品を探しています。"
+            #     ),
+            #     "query": "NARUTOが好きです。忍者や友情をテーマにした作品を探しています。",
+            # },
+            # {
+            #     "title": "3. るろうに剣心ベースの推薦",
+            #     "func": lambda: graphrag.recommend_manga(
+            #         "るろうに剣心が好きです。歴史物や剣術をテーマにした作品を教えてください。"
+            #     ),
+            #     "query": "るろうに剣心が好きです。歴史物や剣術をテーマにした作品を教えてください。",
+            # },
         ]
 
         for i, demo in enumerate(demos):
