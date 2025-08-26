@@ -321,7 +321,7 @@ class MangaGraphRAG:
             search = self.client.search_neo4j(mention, limit=10, include_related=True)
             for node in search.get("nodes", []) or []:
                 label = str(self._node_label(node))
-                score = self._similarity(mention.lower(), label.lower())
+
                 candidates.append(
                     {
                         "mention": mention,
@@ -329,7 +329,7 @@ class MangaGraphRAG:
                         "entity_type": self._node_type(node),
                         "label": label,
                         "node": node,
-                        "score": score,
+                        # "score": score,
                     }
                 )
 
