@@ -12,6 +12,8 @@ using the Manga Graph API to:
 
 import json
 import os
+import re
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 import ipdb
@@ -232,6 +234,207 @@ class MangaGraphRAG:
 関係性の説明:""",
         )
 
+        # エンティティ抽出（自然言語→候補）
+        self.entity_extraction_prompt = PromptTemplate(
+            input_variables=["user_text"],
+            template="""
+あなたは漫画に関するエンティティ抽出器です。ユーザーの自由記述から、以下のJSON形式だけを出力してください。説明文は不要です。
+
+必ずこのスキーマ:
+{{"titles": [], "authors": [], "magazines": [], "keywords": []}}
+
+- titles: 作品名の候補（不確実でも候補を入れる）
+- authors: 作者名の候補
+- magazines: 掲載誌の候補
+- keywords: ジャンル/特徴/キーワード
+
+ユーザー入力:
+{user_text}
+""",
+        )
+
+    # --- helper methods for entity linking ---
+    def _node_label(self, node: Dict[str, Any]) -> str:
+        return (
+            node.get("label")
+            or node.get("name")
+            or node.get("title")
+            or (node.get("properties", {}) or {}).get("name")
+            or (node.get("properties", {}) or {}).get("title")
+            or "N/A"
+        )
+
+    def _node_type(self, node: Dict[str, Any]) -> str:
+        t = node.get("type")
+        if isinstance(t, str) and t:
+            return t
+        labels = node.get("labels")
+        if isinstance(labels, list) and labels:
+            return labels[0]
+        return "Unknown"
+
+    def _similarity(self, a: str, b: str) -> float:
+        return SequenceMatcher(None, a, b).ratio()
+
+    def extract_entities_from_text(self, text: str) -> Dict[str, List[str]]:
+        """Use LLM to extract entity candidates from natural language text"""
+        try:
+            chain = self.entity_extraction_prompt | self.llm
+            out = chain.invoke({"user_text": text})
+            content = (out.content or "").strip()
+            m = re.search(r"\{[\s\S]*\}", content)
+            json_str = m.group(0) if m else content
+            data = json.loads(json_str)
+        except Exception:
+            data = {"titles": [], "authors": [], "magazines": [], "keywords": []}
+        # Normalize and uniquify
+        result: Dict[str, List[str]] = {k: [] for k in ["titles", "authors", "magazines", "keywords"]}
+        for k in result.keys():
+            vals = data.get(k, []) or []
+            if isinstance(vals, str):
+                vals = [vals]
+            # keep order while uniquifying
+            seen = set()
+            cleaned: List[str] = []
+            for v in vals:
+                if not v:
+                    continue
+                s = str(v).strip()
+                if s and s not in seen:
+                    seen.add(s)
+                    cleaned.append(s)
+            result[k] = cleaned
+        return result
+
+    def link_entities(self, entities: Dict[str, List[str]]) -> Dict[str, Any]:
+        """Link extracted entities to graph nodes via Neo4j search and fuzzy scoring"""
+        candidates: List[Dict[str, Any]] = []
+        search_targets: List[Tuple[str, str]] = []
+        for mention in entities.get("titles", []):
+            search_targets.append(("Title", mention))
+        for mention in entities.get("authors", []):
+            search_targets.append(("Author", mention))
+        for mention in entities.get("magazines", []):
+            search_targets.append(("Magazine", mention))
+
+        for expected_type, mention in search_targets:
+            search = self.client.search_neo4j(mention, limit=10, include_related=True)
+            for node in search.get("nodes", []) or []:
+                label = str(self._node_label(node))
+
+                candidates.append(
+                    {
+                        "mention": mention,
+                        "expected_type": expected_type,
+                        "entity_type": self._node_type(node),
+                        "label": label,
+                        "node": node,
+                        # "score": score,
+                    }
+                )
+
+        # sort and dedupe by (label, entity_type)
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        top: List[Dict[str, Any]] = []
+        seen = set()
+        for c in candidates:
+            key = (c["label"], c["entity_type"])
+            if key in seen:
+                continue
+            seen.add(key)
+            top.append(c)
+            if len(top) >= 10:
+                break
+
+        return {"candidates": top}
+
+    def recommend_from_text(self, user_text: str) -> Dict[str, Any]:
+        """End-to-end: natural language -> entity candidates -> graph -> recommendation"""
+        # Step 0: Extract and link entities
+        entities = self.extract_entities_from_text(user_text)
+        linked = self.link_entities(entities)
+        # Step 1: Aggregate graph around top candidates
+        agg_nodes: List[Dict[str, Any]] = []
+        agg_edges: List[Dict[str, Any]] = []
+        for c in linked.get("candidates", [])[:5]:
+            res = self.client.search_neo4j(c["label"], limit=20, include_related=True)
+            agg_nodes.extend(res.get("nodes", []) or [])
+            agg_edges.extend(res.get("edges", []) or [])
+
+        # Fallback if nothing resolved
+        if not agg_nodes:
+            res = self.client.search_neo4j(user_text, limit=30, include_related=True)
+            agg_nodes = res.get("nodes", []) or []
+            agg_edges = res.get("edges", []) or []
+
+        graph_data = {
+            "nodes": agg_nodes,
+            "edges": agg_edges,
+            "node_count": len(agg_nodes),
+            "relationship_count": len(agg_edges),
+        }
+
+        # ノードIDのマッピングを事前に作成（高速化のため）
+        node_id_to_label = {}
+        for node in agg_nodes:
+            node_id = node.get("id")
+            if node_id:
+                label = self._node_label(node)
+                node_id_to_label[node_id] = label
+
+        # Step 2: Analyze nodes/edges by type
+        nodes_by_type: Dict[str, List[Dict[str, Any]]] = {}
+        for n in agg_nodes:
+            nt = self._node_type(n)
+            nodes_by_type.setdefault(nt, []).append(n)
+        relationships_by_type: Dict[str, List[Dict[str, Any]]] = {}
+        for e in agg_edges:
+            rt = e.get("type", "Unknown")
+            relationships_by_type.setdefault(rt, []).append(e)
+
+        # Step 3: Build context and formatted data
+        context = self._build_recommendation_context(nodes_by_type, relationships_by_type)
+        context += "\n\nエンティティリンク結果:\n"
+        if linked.get("candidates"):
+            for c in linked["candidates"][:5]:
+                context += f"- {c['mention']} -> {c['label']} ({c['entity_type']}, 信頼度: {c['score']:.2f})\n"
+        else:
+            context += "- 候補が見つかりませんでした（全文検索にフォールバック）\n"
+
+        formatted_data = "取得したグラフデータ:\n\n"
+        formatted_data += f"ノード数: {len(agg_nodes)}\n"
+        formatted_data += f"関係数: {len(agg_edges)}\n\n"
+
+        formatted_data += "ノードタイプ別情報:\n"
+        for node_type, nodes in nodes_by_type.items():
+            formatted_data += f"- {node_type}: {len(nodes)}件\n"
+            for node in nodes:
+                node_name = self._node_label(node)
+                formatted_data += f"  • {node_name}\n"
+
+        formatted_data += "\n関係タイプ別情報:\n"
+        for rel_type, rels in relationships_by_type.items():
+            formatted_data += f"- {rel_type}: {len(rels)}件\n"
+            for rel in rels:
+                # 高速化：事前に作成した辞書を使用（O(1)）
+                source = node_id_to_label.get(rel.get("source"), "N/A")
+                target = node_id_to_label.get(rel.get("target"), "N/A")
+                formatted_data += f"  • {source} → {target}\n"
+
+        # Step 4: Generate recommendation using LLM
+        recommendation = self.recommendation_prompt | self.llm
+        result = recommendation.invoke({"user_query": user_text, "graph_data": formatted_data, "context": context})
+
+        return {
+            "recommendation": result.content,
+            "graph_data": graph_data,
+            "nodes_analysis": nodes_by_type,
+            "relationships_analysis": relationships_by_type,
+            "context": context,
+            "entities": entities,
+            "linked_candidates": linked.get("candidates", []),
+        }
+
     def enhance_query_with_graph_context(self, query: str) -> Tuple[Dict[str, Any], str]:
         """Enhance user query with graph context"""
         # First, search for relevant entities
@@ -272,6 +475,15 @@ class MangaGraphRAG:
         # Step 1: Get graph data using neo4j search
         graph_data = self.client.search_neo4j(user_preference, limit=30, include_related=True)
 
+        # ノードIDのマッピングを事前に作成（高速化のため）
+        node_id_to_label = {}
+        if "nodes" in graph_data:
+            for node in graph_data["nodes"]:
+                node_id = node.get("id")
+                if node_id:
+                    label = node.get("label", "N/A")
+                    node_id_to_label[node_id] = label
+
         # Step 2: Extract and analyze nodes and relationships
         nodes_by_type = {}
         relationships_by_type = {}
@@ -289,13 +501,10 @@ class MangaGraphRAG:
                 rel_type = rel.get("type", "Unknown")
                 if rel_type not in relationships_by_type:
                     relationships_by_type[rel_type] = []
-                __source = ", ".join(
-                    [node.get("label", "N/A") for node in graph_data["nodes"] if node["id"] == rel["source"]]
-                )
-                __target = ", ".join(
-                    [node.get("label", "N/A") for node in graph_data["nodes"] if node["id"] == rel["target"]]
-                )
-                relationships_by_type[rel_type].append({"source": __source, "target": __target})
+                # 高速化：辞書ルックアップを使用（O(1)）
+                source = node_id_to_label.get(rel["source"], "N/A")
+                target = node_id_to_label.get(rel["target"], "N/A")
+                relationships_by_type[rel_type].append({"source": source, "target": target})
 
         # Step 3: Build recommendation context from graph structure
         context = self._build_recommendation_context(nodes_by_type, relationships_by_type)
@@ -553,7 +762,7 @@ def interactive_graphrag_demo():
 
     print("=== Manga GraphRAG Interactive Demo ===")
     print("Available commands:")
-    print("  recommend <query>    - Get manga recommendations")
+    print("  recommend <自然言語>   - 自由記述からエンティティリンクしてレコメンド")
     print("  analyze <title>      - Analyze a specific manga")
     print("  relate <e1> | <e2>   - Find relationships between entities")
     print("  lineage <author>     - Explore author lineage")
@@ -571,8 +780,8 @@ def interactive_graphrag_demo():
                 print("Commands: recommend, analyze, relate, lineage, help, quit")
             elif command.startswith("recommend "):
                 query = command[10:]
-                print(f"\nProcessing recommendation for: {query}")
-                result = graphrag.recommend_manga(query)
+                print(f"\nProcessing recommendation for (NL): {query}")
+                result = graphrag.recommend_from_text(query)
                 print("\n推薦結果:")
                 print(result["recommendation"])
             elif command.startswith("analyze "):
@@ -609,9 +818,7 @@ def interactive_graphrag_demo():
 
 
 if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "--interactive":
-        interactive_graphrag_demo()
-    else:
-        demo_graphrag()
+    # if len(sys.argv) > 1 and sys.argv[1] == "--interactive":
+    interactive_graphrag_demo()
+    # else:
+    #     demo_graphrag()
