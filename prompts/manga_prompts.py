@@ -161,6 +161,99 @@ GraphRAGと標準LLMの推薦結果の違いを分析してください。
         )
 
 
+class GraphRAGPrompts:
+    """Prompt Template for GraphRAG"""
+
+    @staticmethod
+    def get_recommendation_prompt() -> PromptTemplate:
+        """Get prompt template for manga recommendations"""
+        return PromptTemplate(
+            input_variables=["user_query", "graph_data", "context"],
+            template="""
+以下のユーザーの好みと、グラフデータベースから取得した情報を基に、
+最適な漫画の推薦を行ってください。
+
+ユーザーの質問: {user_query}
+
+グラフデータベースの検索結果:
+{graph_data}
+
+追加コンテキスト:
+{context}
+
+推薦する際は以下の点を考慮してください：
+1. 作品間の関係性（同じ作者、同じ雑誌、類似ジャンル）
+2. 時代背景や影響関係
+3. ユーザーの好みとの関連性
+4. なぜその作品を推薦するのか具体的な理由
+
+推薦:""",
+        )
+
+    @staticmethod
+    def get_analysis_prompt() -> PromptTemplate:
+        """Get prompt template for manga analysis"""
+        return PromptTemplate(
+            input_variables=["manga_title", "graph_data"],
+            template="""
+以下のグラフデータを基に、「{manga_title}」について詳細な分析を行ってください。
+
+グラフデータ:
+-{graph_data}
+
+分析に含めるべき要素:
+1. 作品の基本情報
+2. 作者とその他の作品
+3. 同じ雑誌に掲載された関連作品
+4. ジャンルや時代の文脈
+5. 作品の影響や系譜
+
+分析結果:""",
+        )
+
+    @staticmethod
+    def get_multi_hop_prompt() -> PromptTemplate:
+        """Get prompt template for multi-hop reasoning"""
+        return PromptTemplate(
+            input_variables=["start_entity", "end_entity", "path_data"],
+            template="""
+「{start_entity}」から「{end_entity}」への関係性について、
+以下のグラフパスデータを基に説明してください。
+
+パスデータ:
+-{path_data}
+
+説明には以下を含めてください：
+1. 直接的な関係
+2. 間接的な関係（共通の要素を通じた関係）
+3. 歴史的・文化的な文脈
+4. その関係性が持つ意味
+
+関係性の説明:""",
+        )
+
+    @staticmethod
+    def get_entity_extraction_prompt() -> PromptTemplate:
+        """Get prompt template for entity extraction"""
+        return PromptTemplate(
+            input_variables=["user_text"],
+            template="""
+あなたは漫画に関するエンティティ抽出器です。ユーザーの自由記述から、以下のJSON形式だけを出力してください。説明文は不要です。
+
+必ずこのスキーマ:
+{{"titles": [], "authors": [], "magazines": [], "keywords": []}}
+
+-- titles: 作品名の候補（不確実でも候補を入れる）
+-- authors: 作者名の候補
+-- magazines: 掲載誌の候補
+-- keywords: ジャンル/特徴/キーワード
+
+ユーザー入力:
+-{user_text}
+""",
+        )
+
+
 class MetaPrompts:
     """Meta prompts for system evaluation and improvement"""
 
