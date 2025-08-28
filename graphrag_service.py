@@ -42,7 +42,7 @@ def _post_text_generation(prompt: str) -> str:
         data = r.json()
         if isinstance(data, dict):
             # API might return {'text': '...'}
-            return (data.get("text") or data.get("content") or "不明").strip()
+            return data.get("generated_text", "")
     except ValueError:
         # fallback: raw text
         return r.text.strip()[:100]
@@ -158,17 +158,24 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
 
 
 def fetch_graph_for_user_input(user_input: str) -> Dict[str, Any]:
+    # 0. strict search
+    graph = strict_search(user_input)
+    if graph.get("nodes"):
+        graph["_extracted_title"] = user_input
+        graph.setdefault("node_count", len(graph.get("nodes", []) or []))
+        graph.setdefault("relationship_count", len(graph.get("edges", []) or []))
+        return graph
+
     # 1. extract title
     extracted_title = extract_formal_title(user_input)
+    logger.info("Extracted title: %s", extracted_title)
 
     # 2. strict search
     graph = strict_search(extracted_title)
     used_fuzzy = False
 
     nodes = graph.get("nodes", []) or []
-    import ipdb
 
-    ipdb.set_trace()
     if not nodes:
         # 3. fuzzy search
         fuzzy_res = fuzzy_search(extracted_title)
@@ -236,6 +243,7 @@ class GraphRAGRecommender:
             "model": self.model,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "streaming": True,
         }
         full_text = ""
         try:

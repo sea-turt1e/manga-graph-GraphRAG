@@ -26,7 +26,7 @@ def stream_generate(text, container, title):
     try:
         url = "http://localhost:8000/text-generation/generate"
         headers = {"Content-Type": "application/json"}
-        data = {"text": text}
+        data = {"text": text, "streaming": "true"}
 
         # ストリーミングレスポンスを処理
         response = requests.post(url, json=data, headers=headers, stream=True)
@@ -92,9 +92,7 @@ def main():
 
     # 入力欄
     st.subheader("🔤 テキスト入力")
-    input_text = st.text_area(
-        "生成したいテキストを入力してください:", height=100, placeholder="例: 主人公が冒険の旅に出る物語"
-    )
+    input_text = st.text_area("生成したいテキストを入力してください:", height=100, placeholder="例: NARUTO")
 
     # 実行ボタン
     if st.button("🚀 生成開始", type="primary", use_container_width=True):
@@ -113,7 +111,6 @@ def main():
             status_text.text("🔄 1つ目のリクエストを実行中...")
             progress_bar.progress(25)
             prompt = get_standard_recommend_prompt(input_text)
-            logging.info(f"Standard Prompt: {prompt}")
             stream_generate(prompt, col1, "🎯 素のLLM（GraphRAGなし）")
 
             # 2つ目 GraphRAG パイプライン
