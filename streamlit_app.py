@@ -1,61 +1,24 @@
 import json
+import logging
 import time
 
 import requests
 import streamlit as st
 
+from graphrag_service import run_graphrag_pipeline
+from prompts.manga_prompts import StandardMangaPrompts
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide")
 
 
-def stream_generate_api(text):
-    """APIからストリーミングレスポンスを取得"""
-    try:
-        url = "http://localhost:8000/text-generation/generate"
-        headers = {"Content-Type": "application/json"}
-        data = {"text": text}
-
-        # ストリーミングレスポンスを処理
-        response = requests.post(url, json=data, headers=headers, stream=True)
-
-        if response.status_code == 200:
-            full_text = ""
-            for line in response.iter_lines():
-                if line:
-                    # バイト文字列をデコード
-                    decoded_line = line.decode("utf-8")
-
-                    # SSE形式の場合、"data: "プレフィックスを削除
-                    if decoded_line.startswith("data: "):
-                        decoded_line = decoded_line[6:]
-
-                    # JSON形式のレスポンスを処理
-                    try:
-                        json_data = json.loads(decoded_line)
-                        if "text" in json_data:
-                            full_text += json_data["text"]
-                        elif "content" in json_data:
-                            full_text += json_data["content"]
-                        else:
-                            full_text += decoded_line
-                    except json.JSONDecodeError:
-                        # JSONでない場合は直接追加
-                        full_text += decoded_line
-
-            return {"success": True, "text": full_text}
-        else:
-            return {
-                "success": False,
-                "error": f"API呼び出しに失敗しました。ステータスコード: {response.status_code}",
-                "details": response.text,
-            }
-
-    except requests.exceptions.ConnectionError:
-        return {
-            "success": False,
-            "error": "APIサーバーに接続できません。http://localhost:8000 が起動していることを確認してください。",
-        }
-    except Exception as e:
-        return {"success": False, "error": f"エラーが発生しました: {str(e)}"}
+def _convert_newlines(text: str) -> str:
+    """Convert raw newlines to HTML <br> for reliable rendering in Streamlit markdown."""
+    if text is None:
+        return ""
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
 
 
 def stream_generate(text, container, title):
@@ -86,18 +49,26 @@ def stream_generate(text, container, title):
                         # JSON形式のレスポンスを処理
                         try:
                             json_data = json.loads(decoded_line)
-                            if "text" in json_data:
-                                full_text += json_data["text"]
-                            elif "content" in json_data:
-                                full_text += json_data["content"]
+                            if isinstance(json_data, dict):
+                                if "text" in json_data:
+                                    full_text += str(json_data["text"])
+                                elif "content" in json_data:
+                                    full_text += str(json_data["content"])
+                                else:
+                                    full_text += (
+                                        " ".join(
+                                            [str(v) for v in json_data.values() if isinstance(v, (str, int, float))]
+                                        )
+                                        or decoded_line
+                                    )
                             else:
-                                full_text += decoded_line
+                                full_text += str(json_data)
                         except json.JSONDecodeError:
                             # JSONでない場合は直接追加
                             full_text += decoded_line
 
                         # リアルタイムで表示を更新
-                        text_placeholder.markdown(full_text)
+                        text_placeholder.markdown(_convert_newlines(full_text), unsafe_allow_html=True)
                         time.sleep(0.01)  # 少し遅延を入れて表示を見やすくする
         else:
             with container.container():
@@ -141,12 +112,47 @@ def main():
             # 最初のリクエストを実行
             status_text.text("🔄 1つ目のリクエストを実行中...")
             progress_bar.progress(25)
-            stream_generate(input_text, col1, "🎯 素のLLM（GraphRAGなし）")
+            prompt = get_standard_recommend_prompt(input_text)
+            logging.info(f"Standard Prompt: {prompt}")
+            stream_generate(prompt, col1, "🎯 素のLLM（GraphRAGなし）")
 
-            # 2つ目のリクエストを実行
-            status_text.text("🔄 2つ目のリクエストを実行中...")
-            progress_bar.progress(75)
-            stream_generate(input_text, col2, "🎯 GraphRAGを使用した生成")
+            # 2つ目 GraphRAG パイプライン
+            status_text.text("🔄 GraphRAGパイプラインを実行中...")
+            progress_bar.progress(60)
+            with col2.container():
+                st.subheader("🎯 GraphRAGを使用した生成")
+                with st.spinner("Graph / 推薦生成中..."):
+                    try:
+                        st.markdown("#### 推薦結果 (GraphRAG)")
+                        reco_placeholder = st.empty()
+                        buffer = []
+
+                        def on_token(t: str):  # streaming callback
+                            buffer.append(t)
+                            # 更新タイミング: 5チャンク毎 / 句点 / 改行
+                            if "\n" in t or len(buffer) % 5 == 0 or t.endswith(("。", "!", "?")):
+                                reco_placeholder.markdown(_convert_newlines("".join(buffer)), unsafe_allow_html=True)
+
+                        result = run_graphrag_pipeline(input_text, token_callback=on_token)
+                        # 最終更新
+                        reco_placeholder.markdown(_convert_newlines(result["recommendation"]), unsafe_allow_html=True)
+                        with st.expander("抽出・検索メタ情報"):
+                            st.write(
+                                {
+                                    "extracted_title": result.get("extracted_title"),
+                                    "fuzzy_used": result.get("fuzzy_used"),
+                                    "fuzzy_best_title": result.get("fuzzy_best_title"),
+                                    "node_count": result.get("raw_graph", {}).get("node_count"),
+                                    "relationship_count": result.get("raw_graph", {}).get("relationship_count"),
+                                }
+                            )
+                            st.text(result.get("graph_summary"))
+                    except ValueError as e:
+                        # Shouldn't normally occur now, but keep fallback
+                        st.error(str(e))
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"GraphRAG実行中にエラー: {e}")
+            progress_bar.progress(90)
 
             # 完了
             progress_bar.progress(100)
@@ -174,6 +180,11 @@ def main():
             st.error("❌ APIサーバーに接続できません。http://localhost:8000 が起動していることを確認してください。")
         except Exception as e:
             st.error(f"❌ 接続確認中にエラーが発生しました: {str(e)}")
+
+
+def get_standard_recommend_prompt(user_query: str) -> str:
+    prompt_template = StandardMangaPrompts.get_recommendation_prompt()
+    return prompt_template.format(user_query=user_query)
 
 
 if __name__ == "__main__":

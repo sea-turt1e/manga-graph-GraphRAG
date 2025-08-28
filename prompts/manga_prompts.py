@@ -253,6 +253,26 @@ class GraphRAGPrompts:
 """,
         )
 
+    @staticmethod
+    def get_title_extraction_prompt() -> PromptTemplate:
+        """Extract a single (most likely) formal manga title from user input."""
+        return PromptTemplate(
+            input_variables=["user_input"],
+            template="""
+以下のユーザー入力から漫画の正式な作品名を1つだけ抽出して出力してください。
+
+制約:
+1. 出力は作品名のみ（余計な記号、句読点、引用符、説明、番号は禁止）
+2. 複数候補がある場合は最も一般的/代表的なものを選択
+3. 入力が曖昧な場合は推測して最も関連性が高い既存の有名漫画作品名1つを出力
+4. 作品名が存在しない/不明な場合は「不明」と出力
+5. カタカナ/英語/漢字など公式で一般的に用いられる表記を使用
+
+ユーザー入力:
+{user_input}
+""",
+        )
+
 
 class MetaPrompts:
     """Meta prompts for system evaluation and improvement"""
