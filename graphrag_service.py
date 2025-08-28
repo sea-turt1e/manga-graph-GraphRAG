@@ -289,7 +289,6 @@ class GraphRAGRecommender:
 
 def run_graphrag_pipeline(
     user_input: str,
-    openai_api_key: Optional[str] = None,  # kept for backward compat
     token_callback: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     graph = fetch_graph_for_user_input(user_input)
