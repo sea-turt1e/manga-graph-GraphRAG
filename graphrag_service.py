@@ -10,6 +10,7 @@ Steps implemented:
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable, Dict, Optional
 
@@ -249,38 +250,35 @@ class GraphRAGRecommender:
         try:
             with requests.post(TEXT_GEN_ENDPOINT, json=body, timeout=180, stream=True) as r:
                 r.raise_for_status()
-                for line in r.iter_lines():
-                    if not line:
-                        continue
-                    try:
-                        decoded = line.decode("utf-8")
-                    except Exception:
-                        continue
-                    if decoded.startswith("data: "):
-                        decoded = decoded[6:]
-                    # Try parse JSON line
-                    appended = ""
-                    try:
-                        piece = decoded.strip()
-                        data = None
-                        if piece:
+                buffer = ""
+                for chunk in r.iter_content(chunk_size=None, decode_unicode=True):
+                    buffer += chunk
+                    # SSE format: "data: {...}\n\n" で区切られる
+                    while "\n\n" in buffer:
+                        message, buffer = buffer.split("\n\n", 1)
+                        if message.startswith("data: "):
+                            line = message[6:].strip()  # "data: " を除去
+                            if not line:
+                                continue
+
+                            # JSONパースして text フィールドを取得
+                            appended = ""
                             try:
-                                data = requests.utils.json.loads(piece)
+                                if line.startswith("{") and line.endswith("}"):
+                                    data = json.loads(line)
+                                    if isinstance(data, dict) and "text" in data:
+                                        appended = str(data["text"])
+                                else:
+                                    # JSON形式でない場合はそのまま使用
+                                    appended = line
                             except Exception:
-                                data = None
-                        if isinstance(data, dict):
-                            if "text" in data:
-                                appended = str(data["text"])
-                            elif "content" in data:
-                                appended = str(data["content"])
-                        if not appended:  # fallback raw
-                            appended = decoded
-                    except Exception:  # noqa: BLE001
-                        appended = decoded
-                    if appended:
-                        full_text += appended
-                        if token_callback:
-                            token_callback(appended)
+                                # JSONパースに失敗した場合はそのまま使用
+                                appended = line
+
+                            if appended:
+                                full_text += appended
+                                if token_callback:
+                                    token_callback(appended)
         except Exception as e:  # noqa: BLE001
             logger.error("GraphRAG streaming generation failed: %s", e)
             return full_text + f"\n[GraphRAG生成エラー] {e}"

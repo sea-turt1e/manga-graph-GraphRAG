@@ -30,51 +30,54 @@ def stream_generate(text, container, title):
 
         # ストリーミングレスポンスを処理
         response = requests.post(url, json=data, headers=headers, stream=True)
+        response.raise_for_status()  # エラーチェック
 
-        if response.status_code == 200:
-            full_text = ""
-            with container.container():
-                st.subheader(title)
-                text_placeholder = st.empty()
+        full_text = ""
+        buffer = ""
+        with container.container():
+            st.subheader(title)
+            text_placeholder = st.empty()
 
-                for line in response.iter_lines():
-                    if line:
-                        # バイト文字列をデコード
-                        decoded_line = line.decode("utf-8")
+            for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                buffer += chunk
+                while "\n\n" in buffer:
+                    message, buffer = buffer.split("\n\n", 1)
+                    if message.startswith("data: "):
+                        line = message[len("data: ") :].strip()
+                        if not line:
+                            continue
 
-                        # SSE形式の場合、"data: "プレフィックスを削除
-                        if decoded_line.startswith("data: "):
-                            decoded_line = decoded_line[6:]
-
-                        # JSON形式のレスポンスを処理
-                        try:
-                            json_data = json.loads(decoded_line)
-                            if isinstance(json_data, dict):
-                                if "text" in json_data:
-                                    full_text += str(json_data["text"])
-                                elif "content" in json_data:
-                                    full_text += str(json_data["content"])
-                                else:
-                                    full_text += (
-                                        " ".join(
+                        # lineがJSON形式（"{...}"）であるかチェック
+                        if line.startswith("{") and line.endswith("}"):
+                            try:
+                                json_data = json.loads(line)
+                                if isinstance(json_data, dict):
+                                    if "text" in json_data:
+                                        full_text += str(json_data["text"])
+                                    elif "content" in json_data:
+                                        full_text += str(json_data["content"])
+                                    else:
+                                        # 他のキーも考慮
+                                        full_text += " ".join(
                                             [str(v) for v in json_data.values() if isinstance(v, (str, int, float))]
                                         )
-                                        or decoded_line
-                                    )
-                            else:
-                                full_text += str(json_data)
-                        except json.JSONDecodeError:
-                            # JSONでない場合は直接追加
-                            full_text += decoded_line
+                                else:
+                                    full_text += str(json_data)
+                            except json.JSONDecodeError:
+                                # JSONデコードに失敗した場合は、文字列としてそのまま追加
+                                full_text += line
+                        else:
+                            # JSON形式でない場合は、そのままテキストとして追加
+                            full_text += line
 
                         # リアルタイムで表示を更新
-                        text_placeholder.markdown(_convert_newlines(full_text), unsafe_allow_html=True)
+                        text_placeholder.markdown(full_text)
                         time.sleep(0.01)  # 少し遅延を入れて表示を見やすくする
-        else:
-            with container.container():
-                st.subheader(title)
-                st.error(f"API呼び出しに失敗しました。ステータスコード: {response.status_code}")
-                st.text(f"レスポンス: {response.text}")
+    except requests.exceptions.HTTPError as e:
+        with container.container():
+            st.subheader(title)
+            st.error(f"API呼び出しに失敗しました。ステータスコード: {e.response.status_code}")
+            st.text(f"レスポンス: {e.response.text}")
 
     except requests.exceptions.ConnectionError:
         with container.container():
@@ -128,11 +131,12 @@ def main():
                             buffer.append(t)
                             # 更新タイミング: 5チャンク毎 / 句点 / 改行
                             if "\n" in t or len(buffer) % 5 == 0 or t.endswith(("。", "!", "?")):
-                                reco_placeholder.markdown(_convert_newlines("".join(buffer)), unsafe_allow_html=True)
+                                # GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
+                                reco_placeholder.markdown("".join(buffer))
 
                         result = run_graphrag_pipeline(input_text, token_callback=on_token)
-                        # 最終更新
-                        reco_placeholder.markdown(_convert_newlines(result["recommendation"]), unsafe_allow_html=True)
+                        # 最終更新 - GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
+                        reco_placeholder.markdown(result["recommendation"])
                         with st.expander("抽出・検索メタ情報"):
                             st.write(
                                 {
