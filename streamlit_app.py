@@ -71,7 +71,7 @@ def stream_generate(text, container, title):
                             full_text += line
 
                         # リアルタイムで表示を更新
-                        text_placeholder.markdown(_convert_newlines(full_text), unsafe_allow_html=True)
+                        text_placeholder.markdown(full_text)
                         time.sleep(0.01)  # 少し遅延を入れて表示を見やすくする
     except requests.exceptions.HTTPError as e:
         with container.container():
@@ -131,11 +131,12 @@ def main():
                             buffer.append(t)
                             # 更新タイミング: 5チャンク毎 / 句点 / 改行
                             if "\n" in t or len(buffer) % 5 == 0 or t.endswith(("。", "!", "?")):
-                                reco_placeholder.markdown(_convert_newlines("".join(buffer)), unsafe_allow_html=True)
+                                # GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
+                                reco_placeholder.markdown("".join(buffer))
 
                         result = run_graphrag_pipeline(input_text, token_callback=on_token)
-                        # 最終更新
-                        reco_placeholder.markdown(_convert_newlines(result["recommendation"]), unsafe_allow_html=True)
+                        # 最終更新 - GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
+                        reco_placeholder.markdown(result["recommendation"])
                         with st.expander("抽出・検索メタ情報"):
                             st.write(
                                 {
