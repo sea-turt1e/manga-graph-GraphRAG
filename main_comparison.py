@@ -6,6 +6,7 @@ This module provides the main entry points for running comparisons between
 GraphRAG and standard LLM approaches to manga recommendation and analysis.
 """
 
+import os
 import sys
 
 from comparison_service import ComparisonFormatter, ComparisonService, interactive_comparison_demo
@@ -44,7 +45,7 @@ def main():
 def run_predefined_demos():
     """Run predefined demo scenarios"""
     try:
-        comparison_service = ComparisonService()
+        comparison_service = ComparisonService(api_base_url=os.getenv("API_BASE", "http://localhost:8000"))
         formatter = ComparisonFormatter()
         demo_runner = DemoRunner(comparison_service, formatter)
 
@@ -97,7 +98,7 @@ def run_custom_demo():
         return
 
     try:
-        comparison_service = ComparisonService()
+        comparison_service = ComparisonService(api_base_url=os.getenv("API_BASE", "http://localhost:8000"))
         formatter = ComparisonFormatter()
         demo_runner = DemoRunner(comparison_service, formatter)
 
@@ -128,7 +129,7 @@ def run_custom_demo():
 def run_specific_scenario(scenario_type: str):
     """Run specific type of scenario"""
     try:
-        comparison_service = ComparisonService()
+        comparison_service = ComparisonService(api_base_url=os.getenv("API_BASE", "http://localhost:8000"))
         formatter = ComparisonFormatter()
         demo_runner = DemoRunner(comparison_service, formatter)
 
@@ -174,7 +175,7 @@ def quick_test():
     print("=== クイックテスト ===")
 
     try:
-        comparison_service = ComparisonService()
+        comparison_service = ComparisonService(api_base_url=os.getenv("API_BASE", "http://localhost:8000"))
         formatter = ComparisonFormatter()
 
         # 簡単なテスト
