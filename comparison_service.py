@@ -8,7 +8,7 @@ This module provides services to compare:
 """
 
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -17,7 +17,7 @@ from sample_with_manga_graph_api import MangaGraphRAG
 
 # プロンプトを別ファイルからインポート
 try:
-    from prompts.manga_prompts import ComparisonPrompts, StandardMangaPrompts
+    from prompts.manga_prompts import StandardMangaPrompts
 except ImportError:
     print("Warning: prompts.manga_prompts not found. Using fallback prompts.")
 
@@ -293,10 +293,10 @@ class ComparisonFormatter:
 
         # Header
         if "query" in comparison_result:
-            output.append(f"=== 推薦比較結果 ===")
+            output.append("=== 推薦比較結果 ===")
             output.append(f"ユーザークエリ: {comparison_result['query']}")
         elif "manga_title" in comparison_result:
-            output.append(f"=== 分析比較結果 ===")
+            output.append("=== 分析比較結果 ===")
             output.append(f"分析対象: {comparison_result['manga_title']}")
 
         output.append("")
@@ -380,7 +380,7 @@ def interactive_comparison_demo():
     print()
 
     try:
-        comparison_service = ComparisonService()
+        comparison_service = ComparisonService(api_base_url=os.getenv("API_BASE", "http://localhost:8000"))
         formatter = ComparisonFormatter()
 
         while True:

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 
 import requests
@@ -24,7 +25,8 @@ def _convert_newlines(text: str) -> str:
 def stream_generate(text, container, title):
     """APIからストリーミングレスポンスを取得して表示"""
     try:
-        url = "http://localhost:8000/text-generation/generate"
+        api_base = os.getenv("API_BASE", "http://localhost:8000")
+        url = f"{api_base}/text-generation/generate"
         headers = {"Content-Type": "application/json"}
         data = {"text": text, "streaming": "true"}
 
