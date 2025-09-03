@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Callable, Dict, Optional
 
 import requests
@@ -21,7 +22,7 @@ from prompts.manga_prompts import GraphRAGPrompts
 
 logger = logging.getLogger(__name__)
 
-API_BASE = "http://localhost:8000"
+API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
 STRICT_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search"
 FUZZY_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search-fuzzy"
