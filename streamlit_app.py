@@ -86,7 +86,7 @@ def stream_generate(text, container, title):
     except requests.exceptions.ConnectionError:
         with container.container():
             st.subheader(title)
-            st.error("APIサーバーに接続できません。http://localhost:8000 が起動していることを確認してください。")
+            st.error("APIサーバーに接続できません。API_Serverが起動していることを確認してください。")
     except Exception as e:
         with container.container():
             st.subheader(title)
@@ -186,7 +186,7 @@ def check_server_connection(api_base: str):
         else:
             st.warning(f"⚠️ サーバーからの応答が異常です (ステータス: {response.status_code})")
     except requests.exceptions.ConnectionError:
-        st.error(f"❌ APIサーバーに接続できません。API_Serverが起動していることを確認してください。")
+        st.error("❌ APIサーバーに接続できません。API_Serverが起動していることを確認してください。")
     except Exception as e:
         st.error(f"❌ 接続確認中にエラーが発生しました: {str(e)}")
 
