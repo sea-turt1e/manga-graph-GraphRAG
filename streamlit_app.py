@@ -175,16 +175,20 @@ def main():
     st.subheader("🔧 サーバー状態")
 
     if st.button("サーバー接続確認"):
-        try:
-            response = requests.get("http://localhost:8000/health", timeout=5)
-            if response.status_code == 200:
-                st.success("✅ APIサーバーに正常に接続できます")
-            else:
-                st.warning(f"⚠️ サーバーからの応答が異常です (ステータス: {response.status_code})")
-        except requests.exceptions.ConnectionError:
-            st.error("❌ APIサーバーに接続できません。http://localhost:8000 が起動していることを確認してください。")
-        except Exception as e:
-            st.error(f"❌ 接続確認中にエラーが発生しました: {str(e)}")
+        check_server_connection(os.getenv("API_BASE", "http://localhost:8000"))
+
+
+def check_server_connection(api_base: str):
+    try:
+        response = requests.get(f"{api_base}/health", timeout=5)
+        if response.status_code == 200:
+            st.success("✅ APIサーバーに正常に接続できます")
+        else:
+            st.warning(f"⚠️ サーバーからの応答が異常です (ステータス: {response.status_code})")
+    except requests.exceptions.ConnectionError:
+        st.error(f"❌ APIサーバーに接続できません。API_Serverが起動していることを確認してください。")
+    except Exception as e:
+        st.error(f"❌ 接続確認中にエラーが発生しました: {str(e)}")
 
 
 def get_standard_recommend_prompt(user_query: str) -> str:
