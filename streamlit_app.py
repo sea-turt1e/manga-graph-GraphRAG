@@ -96,8 +96,8 @@ def main():
     st.markdown("同じテキストに対して素のLLM（GraphRAGなし）とGraphRAGを使用した生成の結果を比較表示します。")
 
     # 入力欄
-    st.subheader("🔤 テキスト入力")
-    input_text = st.text_area("生成したいテキストを入力してください:", height=100, placeholder="例: NARUTO")
+    st.subheader("🔤 漫画名を入力")
+    input_text = st.text_area("おすすめ文を生成したい漫画名を入力してください。:", height=100, placeholder="例: NARUTO")
 
     # 実行ボタン
     if st.button("🚀 生成開始", type="primary", use_container_width=True):
