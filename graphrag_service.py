@@ -90,9 +90,6 @@ def strict_search(
     try:
         r = requests.get(STRICT_SEARCH_ENDPOINT, params=params, timeout=60)
         r.raise_for_status()
-        import ipdb
-
-        ipdb.set_trace()
         return r.json()
     except Exception as e:
         logger.warning("strict search error: %s", e)
@@ -133,13 +130,25 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
 
     # Group nodes by label/type
     by_type: Dict[str, int] = {}
+    sample_by_type: Dict[str, list] = {}
+    SAMPLE_LIMIT = 5  # 各タイプのサンプル最大件数
     for n in nodes:
         t = n.get("type") or (n.get("labels") or ["Unknown"])[0]
         by_type[t] = by_type.get(t, 0) + 1
+        # サンプル収集（重複は避ける）
+        label = _node_label(n)
+        if t not in sample_by_type:
+            sample_by_type[t] = []
+        if label and label not in sample_by_type[t] and len(sample_by_type[t]) < SAMPLE_LIMIT:
+            sample_by_type[t].append(label)
     if by_type:
         ctx.append("\nノードタイプ内訳:")
         for t, cnt in sorted(by_type.items(), key=lambda x: -x[1]):
-            ctx.append(f"- {t}: {cnt}件")
+            samples = sample_by_type.get(t) or []
+            if samples:
+                ctx.append(f"- {t}: {cnt}件 (例: {', '.join(samples)})")
+            else:
+                ctx.append(f"- {t}: {cnt}件")
 
     # Sample edges
     if edges:

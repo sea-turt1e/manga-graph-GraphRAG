@@ -527,7 +527,6 @@ class MangaGraphRAG:
             for node in nodes:
                 node_name = node.get("label", "N/A")
                 formatted_data += f"  • {node_name}"
-                # ipdb.set_trace()  # Set a breakpoint for debugging
                 # if node.get("properties"):
                 #     props = []
                 #     for k, v in list(node["properties"].items())[:3]:

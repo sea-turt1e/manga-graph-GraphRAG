@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import os
@@ -15,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide")
 load_dotenv()
+
+# argsでdebugモードを指定可能に
+parser = argparse.ArgumentParser()
+parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+args = parser.parse_args()
 
 
 def _convert_newlines(text: str) -> str:
@@ -130,10 +136,11 @@ def main():
             status_text = st.empty()
 
             # 最初のリクエストを実行
-            status_text.text("🔄 1つ目のリクエストを実行中...")
-            progress_bar.progress(25)
-            prompt = get_standard_recommend_prompt(input_text)
-            stream_generate(prompt, col1, "🎯 素のLLM（GraphRAGなし）")
+            if not args.debug:
+                status_text.text("🔄 1つ目のリクエストを実行中...")
+                progress_bar.progress(25)
+                prompt = get_standard_recommend_prompt(input_text)
+                stream_generate(prompt, col1, "🎯 素のLLM（GraphRAGなし）")
 
             # 2つ目 GraphRAG パイプライン
             status_text.text("🔄 GraphRAGパイプラインを実行中...")
