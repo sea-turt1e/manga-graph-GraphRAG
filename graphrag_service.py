@@ -76,11 +76,23 @@ def extract_formal_title(user_input: str) -> str:
     return title
 
 
-def strict_search(title: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
-    params = {"q": title, "limit": limit, "include_related": str(include_related).lower()}
+def strict_search(
+    title: str, limit: int = 20, include_related: bool = True, min_total_volumes: int = 5
+) -> Dict[str, Any]:
+    # Added sort_total_volumes & min_total_volumes per requirement
+    params = {
+        "q": title,
+        "limit": limit,
+        "include_related": str(include_related).lower(),
+        "sort_total_volumes": "desc",
+        "min_total_volumes": min_total_volumes,
+    }
     try:
         r = requests.get(STRICT_SEARCH_ENDPOINT, params=params, timeout=60)
         r.raise_for_status()
+        import ipdb
+
+        ipdb.set_trace()
         return r.json()
     except Exception as e:
         logger.warning("strict search error: %s", e)
@@ -159,9 +171,9 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
-def fetch_graph_for_user_input(user_input: str) -> Dict[str, Any]:
+def fetch_graph_for_user_input(user_input: str, min_total_volumes: int = 5) -> Dict[str, Any]:
     # 0. strict search
-    graph = strict_search(user_input)
+    graph = strict_search(user_input, min_total_volumes=min_total_volumes)
     if graph.get("nodes"):
         graph["_extracted_title"] = user_input
         graph.setdefault("node_count", len(graph.get("nodes", []) or []))
@@ -173,7 +185,7 @@ def fetch_graph_for_user_input(user_input: str) -> Dict[str, Any]:
     logger.info("Extracted title: %s", extracted_title)
 
     # 2. strict search
-    graph = strict_search(extracted_title)
+    graph = strict_search(extracted_title, min_total_volumes=min_total_volumes)
     used_fuzzy = False
 
     nodes = graph.get("nodes", []) or []
@@ -198,7 +210,7 @@ def fetch_graph_for_user_input(user_input: str) -> Dict[str, Any]:
                 or best.get("name")
                 or extracted_title
             )
-            graph = strict_search(title_prop)
+            graph = strict_search(title_prop, min_total_volumes=min_total_volumes)
             graph["_fuzzy_best_title"] = title_prop
             graph["_fuzzy_used"] = True
         else:
@@ -289,8 +301,9 @@ class GraphRAGRecommender:
 def run_graphrag_pipeline(
     user_input: str,
     token_callback: Optional[Callable[[str], None]] = None,
+    min_total_volumes: int = 5,
 ) -> Dict[str, Any]:
-    graph = fetch_graph_for_user_input(user_input)
+    graph = fetch_graph_for_user_input(user_input, min_total_volumes=min_total_volumes)
     recommender = GraphRAGRecommender()
     rec_text = recommender.recommend(user_input, graph, token_callback=token_callback)
     return {

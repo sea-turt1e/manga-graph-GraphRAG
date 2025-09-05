@@ -16,7 +16,6 @@ import re
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
-import ipdb
 import requests
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
@@ -109,7 +108,14 @@ class MangaGraphClient:
     # Neo4j endpoints
     def search_neo4j(self, query: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
         """Search using Neo4j"""
-        params = {"q": query, "limit": limit, "include_related": include_related}
+        # Added sort_total_volumes & min_total_volumes per requirement
+        params = {
+            "q": query,
+            "limit": limit,
+            "include_related": include_related,
+            "sort_total_volumes": "desc",
+            "min_total_volumes": 5,
+        }
         return self._make_request("GET", "/api/v1/neo4j/search", params=params)
 
     def get_creator_works_neo4j(self, creator_name: str, limit: int = 50) -> Dict[str, Any]:

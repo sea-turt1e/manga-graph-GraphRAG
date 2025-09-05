@@ -97,9 +97,24 @@ def main():
     st.title("📚 GraphRAGを使用した生成デモ")
     st.markdown("同じテキストに対して素のLLM（GraphRAGなし）とGraphRAGを使用した生成の結果を比較表示します。")
 
-    # 入力欄
-    st.subheader("🔤 漫画名を入力")
-    input_text = st.text_area("おすすめ文を生成したい漫画名を入力してください。:", height=100, placeholder="例: NARUTO")
+    # 入力欄 + 巻数フィルタ（PCでは横並び 4:1 / モバイルでは自動縦積み）
+    st.subheader("🔤 漫画入力とフィルタ")
+    col_title, col_vol = st.columns([4, 1], gap="small")
+    with col_title:
+        input_text = st.text_area(
+            "おすすめ文を生成したい漫画名を入力してください。:",
+            height=100,
+            placeholder="例: NARUTO",
+        )
+    with col_vol:
+        min_vol = st.number_input(
+            "n巻以上発行 (≤10)",
+            min_value=1,
+            max_value=10,
+            value=5,
+            step=1,
+            help="指定した巻数以上の単行本が発行されている作品に限定します",
+        )
 
     # 実行ボタン
     if st.button("🚀 生成開始", type="primary", use_container_width=True):
@@ -138,7 +153,9 @@ def main():
                                 # GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
                                 reco_placeholder.markdown("".join(buffer))
 
-                        result = run_graphrag_pipeline(input_text, token_callback=on_token)
+                        result = run_graphrag_pipeline(
+                            input_text, token_callback=on_token, min_total_volumes=int(min_vol)
+                        )
                         # 最終更新 - GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
                         reco_placeholder.markdown(result["recommendation"])
                         with st.expander("抽出・検索メタ情報"):
