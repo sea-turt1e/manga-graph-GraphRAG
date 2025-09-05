@@ -76,8 +76,17 @@ def extract_formal_title(user_input: str) -> str:
     return title
 
 
-def strict_search(title: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
-    params = {"q": title, "limit": limit, "include_related": str(include_related).lower()}
+def strict_search(
+    title: str, limit: int = 20, include_related: bool = True, min_total_volumes: int = 5
+) -> Dict[str, Any]:
+    # Added sort_total_volumes & min_total_volumes per requirement
+    params = {
+        "q": title,
+        "limit": limit,
+        "include_related": str(include_related).lower(),
+        "sort_total_volumes": "desc",
+        "min_total_volumes": min_total_volumes,
+    }
     try:
         r = requests.get(STRICT_SEARCH_ENDPOINT, params=params, timeout=60)
         r.raise_for_status()
@@ -121,13 +130,25 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
 
     # Group nodes by label/type
     by_type: Dict[str, int] = {}
+    sample_by_type: Dict[str, list] = {}
+    SAMPLE_LIMIT = 5  # 各タイプのサンプル最大件数
     for n in nodes:
         t = n.get("type") or (n.get("labels") or ["Unknown"])[0]
         by_type[t] = by_type.get(t, 0) + 1
+        # サンプル収集（重複は避ける）
+        label = _node_label(n)
+        if t not in sample_by_type:
+            sample_by_type[t] = []
+        if label and label not in sample_by_type[t] and len(sample_by_type[t]) < SAMPLE_LIMIT:
+            sample_by_type[t].append(label)
     if by_type:
         ctx.append("\nノードタイプ内訳:")
         for t, cnt in sorted(by_type.items(), key=lambda x: -x[1]):
-            ctx.append(f"- {t}: {cnt}件")
+            samples = sample_by_type.get(t) or []
+            if samples:
+                ctx.append(f"- {t}: {cnt}件 (例: {', '.join(samples)})")
+            else:
+                ctx.append(f"- {t}: {cnt}件")
 
     # Sample edges
     if edges:
@@ -159,9 +180,9 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
-def fetch_graph_for_user_input(user_input: str) -> Dict[str, Any]:
+def fetch_graph_for_user_input(user_input: str, min_total_volumes: int = 5) -> Dict[str, Any]:
     # 0. strict search
-    graph = strict_search(user_input)
+    graph = strict_search(user_input, min_total_volumes=min_total_volumes)
     if graph.get("nodes"):
         graph["_extracted_title"] = user_input
         graph.setdefault("node_count", len(graph.get("nodes", []) or []))
@@ -173,7 +194,7 @@ def fetch_graph_for_user_input(user_input: str) -> Dict[str, Any]:
     logger.info("Extracted title: %s", extracted_title)
 
     # 2. strict search
-    graph = strict_search(extracted_title)
+    graph = strict_search(extracted_title, min_total_volumes=min_total_volumes)
     used_fuzzy = False
 
     nodes = graph.get("nodes", []) or []
@@ -198,7 +219,7 @@ def fetch_graph_for_user_input(user_input: str) -> Dict[str, Any]:
                 or best.get("name")
                 or extracted_title
             )
-            graph = strict_search(title_prop)
+            graph = strict_search(title_prop, min_total_volumes=min_total_volumes)
             graph["_fuzzy_best_title"] = title_prop
             graph["_fuzzy_used"] = True
         else:
@@ -289,8 +310,9 @@ class GraphRAGRecommender:
 def run_graphrag_pipeline(
     user_input: str,
     token_callback: Optional[Callable[[str], None]] = None,
+    min_total_volumes: int = 5,
 ) -> Dict[str, Any]:
-    graph = fetch_graph_for_user_input(user_input)
+    graph = fetch_graph_for_user_input(user_input, min_total_volumes=min_total_volumes)
     recommender = GraphRAGRecommender()
     rec_text = recommender.recommend(user_input, graph, token_callback=token_callback)
     return {
