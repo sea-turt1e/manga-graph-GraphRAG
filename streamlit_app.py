@@ -149,7 +149,6 @@ def main():
                 st.subheader("🎯 GraphRAGを使用した生成")
                 with st.spinner("Graph / 推薦生成中..."):
                     try:
-                        st.markdown("#### 推薦結果 (GraphRAG)")
                         reco_placeholder = st.empty()
                         buffer = []
 
