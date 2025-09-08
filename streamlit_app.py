@@ -1,4 +1,3 @@
-import argparse
 import json
 import logging
 import os
@@ -16,11 +15,6 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide")
 load_dotenv()
-
-# argsでdebugモードを指定可能に
-parser = argparse.ArgumentParser()
-parser.add_argument("--debug", action="store_true", help="Enable debug mode")
-args = parser.parse_args()
 
 
 def _convert_newlines(text: str) -> str:
@@ -122,6 +116,13 @@ def main():
             help="指定した巻数以上の単行本が発行されている作品に限定します",
         )
 
+    # 比較用に素のLLMを実行するかの切り替え
+    show_raw_llm = st.checkbox(
+        "素のLLM（GraphRAGなし）も実行して比較する",
+        value=True,
+        help="オフにすると素のLLMをスキップしてGraphRAGのみ実行します",
+    )
+
     # 実行ボタン
     if st.button("🚀 生成開始", type="primary", use_container_width=True):
         if input_text.strip():
@@ -135,8 +136,8 @@ def main():
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            # 最初のリクエストを実行
-            if not args.debug:
+            # 最初のリクエスト（素のLLM）を実行
+            if show_raw_llm:
                 status_text.text("🔄 1つ目のリクエストを実行中...")
                 progress_bar.progress(25)
                 prompt = get_standard_recommend_prompt(input_text)
