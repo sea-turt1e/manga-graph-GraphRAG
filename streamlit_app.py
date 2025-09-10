@@ -141,13 +141,13 @@ def main():
                 status_text.text("🔄 1つ目のリクエストを実行中...")
                 progress_bar.progress(25)
                 prompt = get_standard_recommend_prompt(input_text)
-                stream_generate(prompt, col1, "🎯 素のLLM（GraphRAGなし）")
+                stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
 
             # 2つ目 GraphRAG パイプライン
             status_text.text("🔄 GraphRAGパイプラインを実行中...")
             progress_bar.progress(60)
             with col2.container():
-                st.subheader("🎯 GraphRAGを使用した生成")
+                st.subheader("🕸️ GraphRAGを使用した生成")
                 with st.spinner("Graph / 推薦生成中..."):
                     try:
                         reco_placeholder = st.empty()
