@@ -29,7 +29,7 @@ FUZZY_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search-fuzzy"
 
 DEFAULT_GEN_BODY = {
     "max_tokens": os.getenv("MAX_TOKENS", 1000),
-    "temperature": os.getenv("OPENAI_TEMPERATURE", 0.7),
+    "temperature": os.getenv("OPENAI_TEMPERATURE", 0.5),
     "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
 }
 

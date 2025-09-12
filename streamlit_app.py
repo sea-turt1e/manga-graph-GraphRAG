@@ -170,123 +170,135 @@ def main():
         status_text.empty()
         st.success("✅ 生成が完了しました！")
 
-    # モーダル（候補選択）
-    @st.dialog("🔎 候補が複数見つかりました")
-    def candidate_dialog():  # uses session_state
+    # インライン（ページ内）候補選択パネル
+    def render_candidate_selector_panel():  # uses session_state
         cands = st.session_state.get("fuzzy_candidates", [])
         base_query = st.session_state.get("dialog_extracted_title") or st.session_state.get("pending_user_input")
-        st.write("以下から正しい作品を選んでください。選択後に生成を開始します。")
+        st.subheader("🔎 候補が複数見つかりました")
+        st.write("正しい作品を選んでください。選択後に生成を開始します。")
         st.caption(f"検索語: {base_query}")
 
         options = [c["display"] for c in cands]
         idx = st.radio("候補", options=range(len(options)), format_func=lambda i: options[i], index=0, key="cand_idx")
         cols = st.columns([1, 1])
         with cols[0]:
-            if st.button("決定", type="primary"):
+            if st.button("この作品で生成する", type="primary"):
                 chosen = cands[idx]
                 st.session_state["chosen_title"] = chosen["title"]
-                st.session_state["open_candidate_dialog"] = False
+                st.session_state["awaiting_candidate_selection"] = False
                 st.session_state["start_generation"] = True
                 st.rerun()
         with cols[1]:
-            if st.button("キャンセル"):
-                # キャンセル時は最上位候補または抽出タイトルで続行
+            if st.button("上位候補で生成"):
+                # 上位候補または抽出タイトルで続行
                 fallback = cands[0]["title"] if cands else (st.session_state.get("dialog_extracted_title") or "")
                 st.session_state["chosen_title"] = fallback
-                st.session_state["open_candidate_dialog"] = False
+                st.session_state["awaiting_candidate_selection"] = False
                 st.session_state["start_generation"] = True
                 st.rerun()
 
-    # 実行ボタン押下時の処理（素のLLM→厳格→抽出→あいまい）
+    # 旧フラグ（モーダル用）が残っていれば新フラグに移行
+    if st.session_state.get("open_candidate_dialog"):
+        st.session_state["awaiting_candidate_selection"] = True
+        del st.session_state["open_candidate_dialog"]
+
+    # 選択待ちならページ上部に選択パネルのみ表示し、生成は行わない
+    if st.session_state.get("awaiting_candidate_selection"):
+        st.markdown("---")
+        render_candidate_selector_panel()
+        st.stop()
+
+    # 実行ボタン押下時の処理（厳格→抽出→あいまい→生成開始）
     if st.button("🚀 生成開始", type="primary", use_container_width=True):
         if not input_text.strip():
             st.warning("⚠️ テキストを入力してください。")
         else:
             try:
-                # レイアウトと素のLLMを先に実行
-                st.markdown("---")
-                st.subheader("📊 生成結果の比較")
-                col1, col2 = st.columns(2)
-                with col1.container():
+                # まずは曖昧性解消（候補選択）を完了させる。解決後に生成を開始する。
+                with st.spinner("グラフから漫画名を検索中..."):
+                    # 1) 厳格検索（入力テキスト）
+                    strict_res = strict_search(input_text, min_total_volumes=int(min_vol))
+
+                    selected_title_for_run: str | None = None
+                    if strict_res.get("nodes"):
+                        selected_title_for_run = None  # 入力テキストでそのまま実行
+                    else:
+                        # 2) タイトル抽出 → 厳格
+                        extracted = extract_formal_title(input_text)
+                        strict2 = strict_search(extracted, min_total_volumes=int(min_vol))
+                        if strict2.get("nodes"):
+                            selected_title_for_run = extracted
+                        else:
+                            # 3) あいまい検索
+                            fz = fuzzy_search(extracted)
+                            raw_candidates = (
+                                fz.get("results")
+                                or [node for node in fz.get("nodes") if node.get("type") == "work"]
+                                or []
+                            )
+                            processed = []
+                            for c in raw_candidates:
+                                props = (c.get("properties") or {}) if isinstance(c, dict) else {}
+                                title = props.get("title")
+                                score = props.get("similarity_score")
+                                disp = f"{title}"
+                                if title:
+                                    processed.append({"title": title, "score": score, "display": disp})
+
+                # 曖昧性の結果に応じて分岐
+                if "processed" in locals() and len(processed) > 1:
+                    # 2件以上 → ページ内パネルで選択、選択後に生成開始
+                    st.session_state["fuzzy_candidates"] = processed
+                    st.session_state["dialog_extracted_title"] = extracted
+                    st.session_state["awaiting_candidate_selection"] = True
+                    st.session_state["pending_user_input"] = input_text
+                    st.session_state["pending_min_vol"] = int(min_vol)
+                    st.session_state["pending_show_raw_llm"] = bool(show_raw_llm)
+                    st.rerun()
+                else:
+                    # 候補0/1件 → そのまま生成開始
+                    auto_title = None
+                    if "processed" in locals():
+                        auto_title = processed[0]["title"] if processed else extracted
+                    final_selected_title = selected_title_for_run if selected_title_for_run is not None else auto_title
+
+                    # レイアウト（比較表示）と生成
+                    st.markdown("---")
+                    st.subheader("📊 生成結果の比較")
+                    col1, col2 = st.columns(2)
                     progress_bar = st.progress(0)
                     status_text = st.empty()
+
                     if show_raw_llm:
                         with col1.container():
                             prompt = get_standard_recommend_prompt(input_text)
                             stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
-                with col2.container():
-                    # 1) 厳格検索
-                    strict_res = strict_search(input_text, min_total_volumes=int(min_vol))
-                    if strict_res.get("nodes"):
-                        run_graphrag_into(col2.container(), status_text, progress_bar, input_text, int(min_vol))
-                    else:
-                        # 2) タイトル抽出 → 厳格
-                        with st.spinner("グラフから漫画名を検索中..."):
-                            extracted = extract_formal_title(input_text)
-                            strict2 = strict_search(extracted, min_total_volumes=int(min_vol))
-                        if strict2.get("nodes"):
-                            run_graphrag_into(
-                                col2.container(),
-                                status_text,
-                                progress_bar,
-                                input_text,
-                                int(min_vol),
-                                selected_title=extracted,
-                            )
-                        else:
-                            # 3) あいまい検索
-                            with st.spinner("完全一致するノードが見つからなかったため、近い漫画名を検索しています..."):
-                                fz = fuzzy_search(extracted)
-                                raw_candidates = (
-                                    fz.get("results")
-                                    or [node for node in fz.get("nodes") if node.get("type") == "work"]
-                                    or []
-                                )
-                                # 整形
-                                processed = []
-                                for c in raw_candidates:
-                                    props = (c.get("properties") or {}) if isinstance(c, dict) else {}
-                                    title = props.get("title")
-                                    score = props.get("similarity_score")
-                                    disp = f"{title}"
-                                    processed.append({"title": title, "score": score, "display": disp})
 
-                            if len(processed) <= 1:
-                                # 候補0/1件ならそのまま実行
-                                auto_title = processed[0]["title"] if processed else extracted
-                                run_graphrag_into(
-                                    col2.container(),
-                                    status_text,
-                                    progress_bar,
-                                    input_text,
-                                    int(min_vol),
-                                    selected_title=auto_title,
-                                )
-                            else:
-                                # 2件以上 → ダイアログで選択
-                                st.session_state["fuzzy_candidates"] = processed
-                                st.session_state["dialog_extracted_title"] = extracted
-                                st.session_state["open_candidate_dialog"] = True
-                                st.session_state["pending_user_input"] = input_text
-                                st.session_state["pending_min_vol"] = int(min_vol)
-                                st.session_state["pending_show_raw_llm"] = bool(show_raw_llm)
-                                candidate_dialog()
-                                st.stop()
+                    run_graphrag_into(
+                        col2.container(),
+                        status_text,
+                        progress_bar,
+                        input_text,
+                        int(min_vol),
+                        selected_title=final_selected_title,
+                    )
             except Exception as e:
                 st.error(f"前処理中にエラーが発生しました: {e}")
 
-    # ダイアログの開閉フラグが立っている場合は表示
-    if st.session_state.get("open_candidate_dialog"):
-        candidate_dialog()
-
-    # ダイアログでの選択後に自動実行
+    # 選択後に自動実行
     if st.session_state.get("start_generation"):
-        # ダイアログ後はGraphRAGのみ再実行（素のLLMは再実行しない）
+        # 選択後は比較表示を再構築し、必要に応じて素のLLMも実行
         st.markdown("---")
         st.subheader("📊 生成結果の比較")
         col1, col2 = st.columns(2)
         progress_bar = st.progress(0)
         status_text = st.empty()
+
+        if st.session_state.get("pending_show_raw_llm", False):
+            with col1.container():
+                prompt = get_standard_recommend_prompt(st.session_state.get("pending_user_input", ""))
+                stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
+
         run_graphrag_into(
             col2.container(),
             status_text,
@@ -299,7 +311,7 @@ def main():
         for k in [
             "fuzzy_candidates",
             "dialog_extracted_title",
-            "open_candidate_dialog",
+            "awaiting_candidate_selection",
             "pending_user_input",
             "pending_min_vol",
             "pending_show_raw_llm",
