@@ -174,7 +174,7 @@ class MangaGraphRAG:
     def __init__(self, api_base_url: str = "http://localhost:8000"):
         """Initialize the GraphRAG system"""
         self.client = MangaGraphClient(api_base_url)
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, openai_api_key=os.getenv("OPENAI_API_KEY"))
+        self.llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.7, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
         # Initialize prompt templates
         self._init_prompts()

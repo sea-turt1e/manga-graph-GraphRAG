@@ -47,7 +47,7 @@ class StandardMangaRecommender:
 
     def __init__(self):
         """Initialize the standard recommender"""
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, openai_api_key=os.getenv("OPENAI_API_KEY"))
+        self.llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.7, openai_api_key=os.getenv("OPENAI_API_KEY"))
         self._init_prompts()
 
     def _init_prompts(self):
