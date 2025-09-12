@@ -81,7 +81,7 @@ def extract_formal_title(user_input: str) -> str:
 
 
 def strict_search(
-    title: str, limit: int = 20, include_related: bool = True, min_total_volumes: int = 5
+    title: str, limit: int = 50, include_related: bool = True, min_total_volumes: int = 5
 ) -> Dict[str, Any]:
     # Added sort_total_volumes & min_total_volumes per requirement
     params = {
@@ -171,12 +171,12 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
     nodes = graph.get("nodes", []) or []
     edges = graph.get("edges", []) or []
     out = ["取得したグラフデータ:", f"ノード数: {len(nodes)}", f"関係数: {len(edges)}", ""]
-    out.append("ノード一覧(最大20):")
-    for n in nodes[:20]:
+    out.append("ノード一覧(最大50):")
+    for n in nodes[:50]:
         out.append(f"- {_node_label(n)}")
-    out.append("\n関係(最大20):")
+    out.append("\n関係(最大50):")
     name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id")}
-    for e in edges[:20]:
+    for e in edges[:50]:
         s = name_cache.get(e.get("source"), e.get("source"))
         t = name_cache.get(e.get("target"), e.get("target"))
         edge_type = e.get("type", "REL")

@@ -69,7 +69,7 @@ class MangaGraphClient:
         return self._make_request("GET", "/api/v1/magazines")
 
     # Media Arts Database endpoints
-    def search_media_arts(self, query: str, limit: int = 20) -> Dict[str, Any]:
+    def search_media_arts(self, query: str, limit: int = 50) -> Dict[str, Any]:
         """Search media arts database"""
         params = {"q": query, "limit": limit}
         return self._make_request("GET", "/api/v1/media-arts/search", params=params)
@@ -84,12 +84,12 @@ class MangaGraphClient:
         params = {"limit": limit}
         return self._make_request("GET", "/api/v1/media-arts/magazines", params=params)
 
-    def fulltext_search(self, query: str, search_type: str = "simple_query_string", limit: int = 20) -> Dict[str, Any]:
+    def fulltext_search(self, query: str, search_type: str = "simple_query_string", limit: int = 50) -> Dict[str, Any]:
         """Perform full-text search"""
         params = {"q": query, "search_type": search_type, "limit": limit}
         return self._make_request("GET", "/api/v1/media-arts/fulltext-search", params=params)
 
-    def search_with_related(self, query: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
+    def search_with_related(self, query: str, limit: int = 50, include_related: bool = True) -> Dict[str, Any]:
         """Search with related works"""
         params = {"q": query, "limit": limit, "include_related": include_related}
         return self._make_request("GET", "/api/v1/media-arts/search-with-related", params=params)
@@ -106,7 +106,7 @@ class MangaGraphClient:
         return self._make_request("GET", "/api/v1/media-arts/magazine-relationships", params=params)
 
     # Neo4j endpoints
-    def search_neo4j(self, query: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
+    def search_neo4j(self, query: str, limit: int = 50, include_related: bool = True) -> Dict[str, Any]:
         """Search using Neo4j"""
         # Added sort_total_volumes & min_total_volumes per requirement
         params = {
@@ -362,7 +362,7 @@ class MangaGraphRAG:
         agg_nodes: List[Dict[str, Any]] = []
         agg_edges: List[Dict[str, Any]] = []
         for c in linked.get("candidates", [])[:5]:
-            res = self.client.search_neo4j(c["label"], limit=20, include_related=True)
+            res = self.client.search_neo4j(c["label"], limit=50, include_related=True)
             agg_nodes.extend(res.get("nodes", []) or [])
             agg_edges.extend(res.get("edges", []) or [])
 
@@ -588,7 +588,7 @@ class MangaGraphRAG:
         print(f"Analyzing manga: {manga_title}")
 
         # Get comprehensive data about the manga using neo4j search
-        search_data = self.client.search_neo4j(manga_title, limit=20, include_related=True)
+        search_data = self.client.search_neo4j(manga_title, limit=50, include_related=True)
         # For additional related data, we can search with a higher limit
         related_data = self.client.search_neo4j(manga_title, limit=30, include_related=True)
 
@@ -651,7 +651,7 @@ class MangaGraphRAG:
         print(f"Exploring lineage of: {author_name}")
 
         # Get author's works using neo4j search with author name
-        author_works = self.client.search_neo4j(author_name, limit=20, include_related=True)
+        author_works = self.client.search_neo4j(author_name, limit=50, include_related=True)
 
         # Search for connections
         connections = self.client.search_neo4j(author_name, limit=30)
