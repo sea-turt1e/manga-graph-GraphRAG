@@ -7,7 +7,7 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 
-from graphrag_service import run_graphrag_pipeline
+from graphrag_service import extract_formal_title, fuzzy_search, run_graphrag_pipeline, strict_search
 from prompts.manga_prompts import StandardMangaPrompts
 
 logging.basicConfig(level=logging.INFO)
@@ -15,13 +15,6 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide")
 load_dotenv()
-
-
-def _convert_newlines(text: str) -> str:
-    """Convert raw newlines to HTML <br> for reliable rendering in Streamlit markdown."""
-    if text is None:
-        return ""
-    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
 
 
 def stream_generate(text, container, title):
@@ -123,76 +116,198 @@ def main():
         help="オフにすると素のLLMをスキップしてGraphRAGのみ実行します",
     )
 
-    # 実行ボタン
-    if st.button("🚀 生成開始", type="primary", use_container_width=True):
-        if input_text.strip():
-            st.markdown("---")
-            st.subheader("📊 生成結果の比較")
+    # 右カラムにGraphRAGの結果を書き込むヘルパー
+    def run_graphrag_into(
+        right_container,
+        status_text,
+        progress_bar,
+        user_text: str,
+        min_volumes: int,
+        selected_title: str | None = None,
+    ):
+        status_text.text("🔄 GraphRAGパイプラインを実行中...")
+        progress_bar.progress(60)
+        with right_container:
+            st.subheader("🕸️ GraphRAGを使用した生成")
+            with st.spinner("Graph / 推薦生成中..."):
+                try:
+                    reco_placeholder = st.empty()
+                    buffer = []
 
-            # 2つのカラムを作成
-            col1, col2 = st.columns(2)
+                    def on_token(t: str):
+                        buffer.append(t)
+                        if "\n" in t or len(buffer) % 5 == 0 or t.endswith(("。", "!", "?")):
+                            reco_placeholder.markdown("".join(buffer))
 
-            # プログレスバーを表示
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            # 最初のリクエスト（素のLLM）を実行
-            if show_raw_llm:
-                status_text.text("🔄 1つ目のリクエストを実行中...")
-                progress_bar.progress(25)
-                prompt = get_standard_recommend_prompt(input_text)
-                stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
-
-            # 2つ目 GraphRAG パイプライン
-            status_text.text("🔄 GraphRAGパイプラインを実行中...")
-            progress_bar.progress(60)
-            with col2.container():
-                st.subheader("🕸️ GraphRAGを使用した生成")
-                with st.spinner("Graph / 推薦生成中..."):
-                    try:
-                        reco_placeholder = st.empty()
-                        buffer = []
-
-                        def on_token(t: str):  # streaming callback
-                            buffer.append(t)
-                            # 更新タイミング: 5チャンク毎 / 句点 / 改行
-                            if "\n" in t or len(buffer) % 5 == 0 or t.endswith(("。", "!", "?")):
-                                # GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
-                                reco_placeholder.markdown("".join(buffer))
-
-                        result = run_graphrag_pipeline(
-                            input_text, token_callback=on_token, min_total_volumes=int(min_vol)
+                    result = run_graphrag_pipeline(
+                        user_text,
+                        token_callback=on_token,
+                        min_total_volumes=int(min_volumes),
+                        selected_title=selected_title,
+                    )
+                    reco_placeholder.markdown(result["recommendation"])
+                    with st.expander("抽出・検索メタ情報"):
+                        st.write(
+                            {
+                                "extracted_title": result.get("extracted_title"),
+                                "fuzzy_used": result.get("fuzzy_used"),
+                                "fuzzy_best_title": result.get("fuzzy_best_title"),
+                                "user_selected_candidate": result.get("user_selected_candidate"),
+                                "node_count": result.get("raw_graph", {}).get("node_count"),
+                                "relationship_count": result.get("raw_graph", {}).get("relationship_count"),
+                            }
                         )
-                        # 最終更新 - GraphRAG出力はMarkdownフォーマットなので、変換せずにそのまま表示
-                        reco_placeholder.markdown(result["recommendation"])
-                        with st.expander("抽出・検索メタ情報"):
-                            st.write(
-                                {
-                                    "extracted_title": result.get("extracted_title"),
-                                    "fuzzy_used": result.get("fuzzy_used"),
-                                    "fuzzy_best_title": result.get("fuzzy_best_title"),
-                                    "node_count": result.get("raw_graph", {}).get("node_count"),
-                                    "relationship_count": result.get("raw_graph", {}).get("relationship_count"),
-                                }
-                            )
-                            st.text(result.get("graph_summary"))
-                    except ValueError as e:
-                        # Shouldn't normally occur now, but keep fallback
-                        st.error(str(e))
-                    except Exception as e:  # noqa: BLE001
-                        st.error(f"GraphRAG実行中にエラー: {e}")
-            progress_bar.progress(90)
+                        st.text(result.get("graph_summary"))
+                except ValueError as e:
+                    st.error(str(e))
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"GraphRAG実行中にエラー: {e}")
+        progress_bar.progress(90)
+        progress_bar.progress(100)
+        status_text.text("✅ 生成が完了しました！")
+        time.sleep(1)
+        progress_bar.empty()
+        status_text.empty()
+        st.success("✅ 生成が完了しました！")
 
-            # 完了
-            progress_bar.progress(100)
-            status_text.text("✅ 両方の生成が完了しました！")
-            time.sleep(1)
-            progress_bar.empty()
-            status_text.empty()
+    # モーダル（候補選択）
+    @st.dialog("🔎 候補が複数見つかりました")
+    def candidate_dialog():  # uses session_state
+        cands = st.session_state.get("fuzzy_candidates", [])
+        base_query = st.session_state.get("dialog_extracted_title") or st.session_state.get("pending_user_input")
+        st.write("以下から正しい作品を選んでください。選択後に生成を開始します。")
+        st.caption(f"検索語: {base_query}")
 
-            st.success("✅ 両方の生成が完了しました！")
-        else:
+        options = [c["display"] for c in cands]
+        idx = st.radio("候補", options=range(len(options)), format_func=lambda i: options[i], index=0, key="cand_idx")
+        cols = st.columns([1, 1])
+        with cols[0]:
+            if st.button("決定", type="primary"):
+                chosen = cands[idx]
+                st.session_state["chosen_title"] = chosen["title"]
+                st.session_state["open_candidate_dialog"] = False
+                st.session_state["start_generation"] = True
+                st.rerun()
+        with cols[1]:
+            if st.button("キャンセル"):
+                # キャンセル時は最上位候補または抽出タイトルで続行
+                fallback = cands[0]["title"] if cands else (st.session_state.get("dialog_extracted_title") or "")
+                st.session_state["chosen_title"] = fallback
+                st.session_state["open_candidate_dialog"] = False
+                st.session_state["start_generation"] = True
+                st.rerun()
+
+    # 実行ボタン押下時の処理（素のLLM→厳格→抽出→あいまい）
+    if st.button("🚀 生成開始", type="primary", use_container_width=True):
+        if not input_text.strip():
             st.warning("⚠️ テキストを入力してください。")
+        else:
+            try:
+                # レイアウトと素のLLMを先に実行
+                st.markdown("---")
+                st.subheader("📊 生成結果の比較")
+                col1, col2 = st.columns(2)
+                with col1.container():
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    if show_raw_llm:
+                        with col1.container():
+                            prompt = get_standard_recommend_prompt(input_text)
+                            stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
+                with col2.container():
+                    # 1) 厳格検索
+                    strict_res = strict_search(input_text, min_total_volumes=int(min_vol))
+                    if strict_res.get("nodes"):
+                        run_graphrag_into(col2.container(), status_text, progress_bar, input_text, int(min_vol))
+                    else:
+                        # 2) タイトル抽出 → 厳格
+                        with st.spinner("グラフから漫画名を検索中..."):
+                            extracted = extract_formal_title(input_text)
+                            strict2 = strict_search(extracted, min_total_volumes=int(min_vol))
+                        if strict2.get("nodes"):
+                            run_graphrag_into(
+                                col2.container(),
+                                status_text,
+                                progress_bar,
+                                input_text,
+                                int(min_vol),
+                                selected_title=extracted,
+                            )
+                        else:
+                            # 3) あいまい検索
+                            with st.spinner("完全一致するノードが見つからなかったため、近い漫画名を検索しています..."):
+                                fz = fuzzy_search(extracted)
+                                raw_candidates = (
+                                    fz.get("results")
+                                    or [node for node in fz.get("nodes") if node.get("type") == "work"]
+                                    or []
+                                )
+                                # 整形
+                                processed = []
+                                for c in raw_candidates:
+                                    props = (c.get("properties") or {}) if isinstance(c, dict) else {}
+                                    title = props.get("title")
+                                    score = props.get("similarity_score")
+                                    disp = f"{title}"
+                                    processed.append({"title": title, "score": score, "display": disp})
+
+                            if len(processed) <= 1:
+                                # 候補0/1件ならそのまま実行
+                                auto_title = processed[0]["title"] if processed else extracted
+                                run_graphrag_into(
+                                    col2.container(),
+                                    status_text,
+                                    progress_bar,
+                                    input_text,
+                                    int(min_vol),
+                                    selected_title=auto_title,
+                                )
+                            else:
+                                # 2件以上 → ダイアログで選択
+                                st.session_state["fuzzy_candidates"] = processed
+                                st.session_state["dialog_extracted_title"] = extracted
+                                st.session_state["open_candidate_dialog"] = True
+                                st.session_state["pending_user_input"] = input_text
+                                st.session_state["pending_min_vol"] = int(min_vol)
+                                st.session_state["pending_show_raw_llm"] = bool(show_raw_llm)
+                                candidate_dialog()
+                                st.stop()
+            except Exception as e:
+                st.error(f"前処理中にエラーが発生しました: {e}")
+
+    # ダイアログの開閉フラグが立っている場合は表示
+    if st.session_state.get("open_candidate_dialog"):
+        candidate_dialog()
+
+    # ダイアログでの選択後に自動実行
+    if st.session_state.get("start_generation"):
+        # ダイアログ後はGraphRAGのみ再実行（素のLLMは再実行しない）
+        st.markdown("---")
+        st.subheader("📊 生成結果の比較")
+        col1, col2 = st.columns(2)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        run_graphrag_into(
+            col2.container(),
+            status_text,
+            progress_bar,
+            st.session_state.get("pending_user_input", input_text),
+            st.session_state.get("pending_min_vol", int(min_vol)),
+            selected_title=st.session_state.get("chosen_title"),
+        )
+        # 後片付け（モーダルを閉じたままに）
+        for k in [
+            "fuzzy_candidates",
+            "dialog_extracted_title",
+            "open_candidate_dialog",
+            "pending_user_input",
+            "pending_min_vol",
+            "pending_show_raw_llm",
+            "chosen_title",
+            "start_generation",
+        ]:
+            if k in st.session_state:
+                del st.session_state[k]
 
     # APIサーバーの状態チェック
     st.markdown("---")

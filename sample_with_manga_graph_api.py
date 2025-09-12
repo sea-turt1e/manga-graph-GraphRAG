@@ -174,7 +174,6 @@ class MangaGraphRAG:
     def __init__(self, api_base_url: str = "http://localhost:8000"):
         """Initialize the GraphRAG system"""
         self.client = MangaGraphClient(api_base_url)
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
         # Initialize prompt templates
         self._init_prompts()
@@ -285,7 +284,7 @@ class MangaGraphRAG:
     def extract_entities_from_text(self, text: str) -> Dict[str, List[str]]:
         """Use LLM to extract entity candidates from natural language text"""
         try:
-            chain = self.entity_extraction_prompt | self.llm
+            chain = self.entity_extraction_prompt
             out = chain.invoke({"user_text": text})
             content = (out.content or "").strip()
             m = re.search(r"\{[\s\S]*\}", content)
@@ -428,7 +427,7 @@ class MangaGraphRAG:
                 formatted_data += f"  • {source} → {target}\n"
 
         # Step 4: Generate recommendation using LLM
-        recommendation = self.recommendation_prompt | self.llm
+        recommendation = self.recommendation_prompt
         result = recommendation.invoke({"user_query": user_text, "graph_data": formatted_data, "context": context})
 
         return {
@@ -544,7 +543,7 @@ class MangaGraphRAG:
                 formatted_data += f"  • {rel.get('source', 'N/A')} → {rel.get('target', 'N/A')}\n"
 
         # Step 5: Generate recommendation using LLM with graph data
-        recommendation = self.recommendation_prompt | self.llm
+        recommendation = self.recommendation_prompt
         result = recommendation.invoke(
             {"user_query": user_preference, "graph_data": formatted_data, "context": context}
         )
@@ -599,7 +598,7 @@ class MangaGraphRAG:
             formatted_data += "\n\n関連情報:\n" + self.client.format_graph_response(related_data)
 
         # Generate analysis
-        analysis = self.analysis_prompt | self.llm
+        analysis = self.analysis_prompt
         result = analysis.invoke({"manga_title": manga_title, "graph_data": formatted_data})
 
         return {"analysis": result.content, "graph_data": search_data, "related_data": related_data}
@@ -637,7 +636,7 @@ class MangaGraphRAG:
                 path_data += f"\n  - {node.get('labels', ['Unknown'])[0]}: {node.get('name', node.get('title', 'N/A'))}"
 
         # Generate explanation
-        explanation = self.multi_hop_prompt | self.llm
+        explanation = self.multi_hop_prompt
         result = explanation.invoke({"start_entity": entity1, "end_entity": entity2, "path_data": path_data})
 
         return {
@@ -682,7 +681,7 @@ class MangaGraphRAG:
         )
 
         # Generate lineage analysis
-        analysis = lineage_prompt | self.llm
+        analysis = lineage_prompt
         result = analysis.invoke({"author_name": author_name, "lineage_data": lineage_data})
 
         return {"lineage_analysis": result.content, "author_works": author_works, "connections": connections}
