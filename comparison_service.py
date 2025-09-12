@@ -47,7 +47,6 @@ class StandardMangaRecommender:
 
     def __init__(self):
         """Initialize the standard recommender"""
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, openai_api_key=os.getenv("OPENAI_API_KEY"))
         self._init_prompts()
 
     def _init_prompts(self):
@@ -57,14 +56,14 @@ class StandardMangaRecommender:
 
     def recommend_manga(self, user_preference: str) -> Dict[str, Any]:
         """Generate manga recommendation using standard LLM approach"""
-        recommendation_chain = self.recommendation_prompt | self.llm
+        recommendation_chain = self.recommendation_prompt
         result = recommendation_chain.invoke({"user_query": user_preference})
 
         return {"recommendation": result.content, "method": "standard_llm", "context_used": "general_knowledge_only"}
 
     def analyze_manga(self, manga_title: str) -> Dict[str, Any]:
         """Analyze manga using standard LLM approach"""
-        analysis_chain = self.analysis_prompt | self.llm
+        analysis_chain = self.analysis_prompt
         result = analysis_chain.invoke({"manga_title": manga_title})
 
         return {"analysis": result.content, "method": "standard_llm", "context_used": "general_knowledge_only"}

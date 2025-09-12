@@ -35,7 +35,7 @@ class StandardMangaPrompts:
 
 ##### 作品タイトル
 - **理由**（なぜこの作品を推薦するのか詳細に説明）
-推薦:""",
+""",
         )
 
     @staticmethod
@@ -97,8 +97,7 @@ class StandardMangaPrompts:
 2. このジャンルの代表的な作品
 3. ユーザーの好みに合致する要素
 4. 推薦する理由
-
-推薦:""",
+""",
         )
 
 
@@ -191,7 +190,7 @@ class GraphRAGPrompts:
 
 ##### 作品タイトル
 - **理由**（なぜこの作品を推薦するのか詳細に説明）
-推薦:""",
+""",
         )
 
     @staticmethod

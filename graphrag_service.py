@@ -27,7 +27,11 @@ TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
 STRICT_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search"
 FUZZY_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search-fuzzy"
 
-DEFAULT_GEN_BODY = {"max_tokens": 1000, "temperature": 0.7, "model": "gpt-4o-mini"}
+DEFAULT_GEN_BODY = {
+    "max_tokens": os.getenv("MAX_TOKENS", 1000),
+    "temperature": os.getenv("OPENAI_TEMPERATURE", 0.7),
+    "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+}
 
 
 def _post_text_generation(prompt: str) -> str:
@@ -97,7 +101,7 @@ def strict_search(
 
 
 def fuzzy_search(
-    query: str, limit: int = 3, similarity_threshold: float = 0.5, embedding_method: str = "huggingface"
+    query: str, limit: int = 5, similarity_threshold: float = 0.8, embedding_method: str = "huggingface"
 ) -> Dict[str, Any]:
     params = {
         "q": query,
@@ -180,7 +184,25 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
-def fetch_graph_for_user_input(user_input: str, min_total_volumes: int = 5) -> Dict[str, Any]:
+def fetch_graph_for_user_input(
+    user_input: str, min_total_volumes: int = 5, selected_title: Optional[str] = None
+) -> Dict[str, Any]:
+    """Fetch graph based on user input.
+
+    If selected_title is provided (from UI fuzzy selection), we skip extraction/fuzzy
+    and directly run strict search with the selected title.
+    """
+    # Fast path: respect user-selected title from UI
+    if selected_title:
+        graph = strict_search(selected_title, min_total_volumes=min_total_volumes)
+        graph["_extracted_title"] = selected_title
+        graph.setdefault("node_count", len(graph.get("nodes", []) or []))
+        graph.setdefault("relationship_count", len(graph.get("edges", []) or []))
+        # mark as fuzzy-used via user selection to surface in UI
+        graph["_fuzzy_used"] = True
+        graph["_fuzzy_best_title"] = selected_title
+        graph["_user_selected_candidate"] = True
+        return graph
     # 0. strict search
     graph = strict_search(user_input, min_total_volumes=min_total_volumes)
     if graph.get("nodes"):
@@ -198,10 +220,10 @@ def fetch_graph_for_user_input(user_input: str, min_total_volumes: int = 5) -> D
     used_fuzzy = False
 
     nodes = graph.get("nodes", []) or []
-
     if not nodes:
         # 3. fuzzy search
         fuzzy_res = fuzzy_search(extracted_title)
+        print(f"Fuzzy search results: {json.dumps(fuzzy_res)[:200]}")
         candidates = fuzzy_res.get("results") or fuzzy_res.get("nodes") or []
         if candidates:
             used_fuzzy = True
@@ -240,7 +262,12 @@ class GraphRAGRecommender:
     fully constructed prompt to the server's /text-generation/generate endpoint.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.3, max_tokens: int = 1000):
+    def __init__(
+        self,
+        model: str = DEFAULT_GEN_BODY["model"],
+        temperature: float = DEFAULT_GEN_BODY["temperature"],
+        max_tokens: int = DEFAULT_GEN_BODY["max_tokens"],
+    ):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -311,14 +338,16 @@ def run_graphrag_pipeline(
     user_input: str,
     token_callback: Optional[Callable[[str], None]] = None,
     min_total_volumes: int = 5,
+    selected_title: Optional[str] = None,
 ) -> Dict[str, Any]:
-    graph = fetch_graph_for_user_input(user_input, min_total_volumes=min_total_volumes)
+    graph = fetch_graph_for_user_input(user_input, min_total_volumes=min_total_volumes, selected_title=selected_title)
     recommender = GraphRAGRecommender()
     rec_text = recommender.recommend(user_input, graph, token_callback=token_callback)
     return {
         "extracted_title": graph.get("_extracted_title"),
         "fuzzy_used": graph.get("_fuzzy_used", False),
         "fuzzy_best_title": graph.get("_fuzzy_best_title"),
+        "user_selected_candidate": graph.get("_user_selected_candidate", False),
         "graph_summary": build_graph_context(graph),
         "recommendation": rec_text,
         "raw_graph": graph,
