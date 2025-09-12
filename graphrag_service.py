@@ -27,7 +27,7 @@ TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
 STRICT_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search"
 FUZZY_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search-fuzzy"
 
-DEFAULT_GEN_BODY = {"max_tokens": 1000, "temperature": 0.7, "model": "gpt-4o-mini"}
+DEFAULT_GEN_BODY = {"max_tokens": 1000, "temperature": 0.7, "model": "gpt-4.1-nano"}
 
 
 def _post_text_generation(prompt: str) -> str:
@@ -240,7 +240,7 @@ class GraphRAGRecommender:
     fully constructed prompt to the server's /text-generation/generate endpoint.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.3, max_tokens: int = 1000):
+    def __init__(self, model: str = "gpt-4.1-nano", temperature: float = 0.3, max_tokens: int = 1000):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
