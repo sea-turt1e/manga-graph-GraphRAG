@@ -26,12 +26,7 @@ API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
 STRICT_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search"
 FUZZY_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search-fuzzy"
-
-DEFAULT_GEN_BODY = {
-    "max_tokens": os.getenv("MAX_TOKENS", 1000),
-    "temperature": os.getenv("OPENAI_TEMPERATURE", 0.5),
-    "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-}
+DEFAULT_GEN_BODY = {"max_tokens": 1000, "temperature": 0.7, "model": "gpt-4.1-nano"}
 
 
 def _post_text_generation(prompt: str) -> str:

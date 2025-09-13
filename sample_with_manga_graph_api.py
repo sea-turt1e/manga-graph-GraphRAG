@@ -174,7 +174,6 @@ class MangaGraphRAG:
     def __init__(self, api_base_url: str = "http://localhost:8000"):
         """Initialize the GraphRAG system"""
         self.client = MangaGraphClient(api_base_url)
-
         # Initialize prompt templates
         self._init_prompts()
 
