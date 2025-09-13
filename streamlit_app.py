@@ -69,21 +69,31 @@ def stream_generate(text, container, title):
 
                         # リアルタイムで表示を更新
                         text_placeholder.markdown(full_text)
+                        # セッションに保持して再描画時も表示できるようにする
+                        st.session_state["raw_llm_output"] = full_text
                         time.sleep(0.01)  # 少し遅延を入れて表示を見やすくする
+        # 完了フラグ
+        st.session_state["raw_llm_done"] = True
     except requests.exceptions.HTTPError as e:
         with container.container():
             st.subheader(title)
             st.error(f"API呼び出しに失敗しました。ステータスコード: {e.response.status_code}")
             st.text(f"レスポンス: {e.response.text}")
+        st.session_state["raw_llm_output"] = f"APIエラー: {e.response.status_code}\n{e.response.text}"
+        st.session_state["raw_llm_done"] = True
 
     except requests.exceptions.ConnectionError:
         with container.container():
             st.subheader(title)
             st.error("APIサーバーに接続できません。API_Serverが起動していることを確認してください。")
+        st.session_state["raw_llm_output"] = "APIサーバーに接続できませんでした。"
+        st.session_state["raw_llm_done"] = True
     except Exception as e:
         with container.container():
             st.subheader(title)
             st.error(f"エラーが発生しました: {str(e)}")
+        st.session_state["raw_llm_output"] = f"エラー: {str(e)}"
+        st.session_state["raw_llm_done"] = True
 
 
 def main():
@@ -202,19 +212,44 @@ def main():
         st.session_state["awaiting_candidate_selection"] = True
         del st.session_state["open_candidate_dialog"]
 
-    # 選択待ちならページ上部に選択パネルのみ表示し、生成は行わない
+    # 選択待ちなら、生LLM結果を左に保持表示しつつ、候補選択パネルを出す（GraphRAGは未実行）
     if st.session_state.get("awaiting_candidate_selection"):
+        st.markdown("---")
+        st.subheader("📊 生成結果の比較")
+        col1, col2 = st.columns(2)
+        with col1.container():
+            st.subheader("💬 素のLLM（GraphRAGなし）")
+            raw_out = st.session_state.get("raw_llm_output")
+            if raw_out:
+                st.markdown(raw_out)
+            else:
+                st.info("素のLLMの結果はここに表示されます。")
+        with col2.container():
+            st.subheader("🕸️ GraphRAGを使用した生成")
+            st.info("候補を選択するとGraphRAGの生成を開始します。")
         st.markdown("---")
         render_candidate_selector_panel()
         st.stop()
 
-    # 実行ボタン押下時の処理（厳格→抽出→あいまい→生成開始）
+    # 実行ボタン押下時の処理（まず素のLLM→その後に厳格/抽出/あいまい→必要なら候補選択→GraphRAG）
     if st.button("🚀 生成開始", type="primary", use_container_width=True):
         if not input_text.strip():
             st.warning("⚠️ テキストを入力してください。")
         else:
             try:
-                # まずは曖昧性解消（候補選択）を完了させる。解決後に生成を開始する。
+                # レイアウト（比較表示）と生成
+                st.markdown("---")
+                st.subheader("📊 生成結果の比較")
+                col1, col2 = st.columns(2)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                if show_raw_llm:
+                    with col1.container():
+                        prompt = get_standard_recommend_prompt(input_text)
+                        stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
+
+                # 曖昧性解消（候補選択）を完了させる。解決後に生成を開始する。
                 with st.spinner("グラフから漫画名を検索中..."):
                     # 1) 厳格検索（入力テキスト）
                     strict_res = strict_search(input_text, min_total_volumes=int(min_vol))
@@ -245,34 +280,27 @@ def main():
                                 if title:
                                     processed.append({"title": title, "score": score, "display": disp})
 
-                # 曖昧性の結果に応じて分岐
-                if "processed" in locals() and len(processed) > 1:
-                    # 2件以上 → ページ内パネルで選択、選択後に生成開始
-                    st.session_state["fuzzy_candidates"] = processed
-                    st.session_state["dialog_extracted_title"] = extracted
-                    st.session_state["awaiting_candidate_selection"] = True
-                    st.session_state["pending_user_input"] = input_text
-                    st.session_state["pending_min_vol"] = int(min_vol)
-                    st.session_state["pending_show_raw_llm"] = bool(show_raw_llm)
-                    st.rerun()
-                else:
-                    # 候補0/1件 → そのまま生成開始
-                    auto_title = None
-                    if "processed" in locals():
-                        auto_title = processed[0]["title"] if processed else extracted
-                    final_selected_title = selected_title_for_run if selected_title_for_run is not None else auto_title
-
-                    # レイアウト（比較表示）と生成
-                    st.markdown("---")
-                    st.subheader("📊 生成結果の比較")
-                    col1, col2 = st.columns(2)
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-
-                    if show_raw_llm:
-                        with col1.container():
-                            prompt = get_standard_recommend_prompt(input_text)
-                            stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
+                    # 曖昧性の結果に応じて分岐
+                    if "processed" in locals() and len(processed) > 1:
+                        # 2件以上 → ページ内パネルで選択、選択後に生成開始
+                        st.session_state["fuzzy_candidates"] = processed
+                        st.session_state["dialog_extracted_title"] = extracted
+                        st.session_state["awaiting_candidate_selection"] = True
+                        st.session_state["pending_user_input"] = input_text
+                        st.session_state["pending_min_vol"] = int(min_vol)
+                        st.session_state["pending_show_raw_llm"] = bool(show_raw_llm)
+                        # 現在のランでパネル表示へ移行
+                        st.markdown("---")
+                        render_candidate_selector_panel()
+                        st.stop()
+                    else:
+                        # 候補0/1件 → そのまま生成開始
+                        auto_title = None
+                        if "processed" in locals():
+                            auto_title = processed[0]["title"] if processed else extracted
+                        final_selected_title = (
+                            selected_title_for_run if selected_title_for_run is not None else auto_title
+                        )
 
                     run_graphrag_into(
                         col2.container(),
@@ -285,19 +313,23 @@ def main():
             except Exception as e:
                 st.error(f"前処理中にエラーが発生しました: {e}")
 
-    # 選択後に自動実行
+    # 選択後に自動実行（左に素のLLM結果を再掲）
     if st.session_state.get("start_generation"):
-        # 選択後は比較表示を再構築し、必要に応じて素のLLMも実行
+        # 選択後は比較表示を再構築して生成
         st.markdown("---")
         st.subheader("📊 生成結果の比較")
         col1, col2 = st.columns(2)
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        if st.session_state.get("pending_show_raw_llm", False):
-            with col1.container():
-                prompt = get_standard_recommend_prompt(st.session_state.get("pending_user_input", ""))
-                stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
+        # 左に保存済みの素のLLM結果を表示（再リクエストはしない）
+        with col1.container():
+            st.subheader("💬 素のLLM（GraphRAGなし）")
+            raw_out = st.session_state.get("raw_llm_output")
+            if raw_out:
+                st.markdown(raw_out)
+            else:
+                st.info("素のLLMの結果はここに表示されます。")
 
         run_graphrag_into(
             col2.container(),
