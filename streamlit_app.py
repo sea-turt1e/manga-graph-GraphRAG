@@ -181,31 +181,43 @@ def main():
         st.success("✅ 生成が完了しました！")
 
     # インライン（ページ内）候補選択パネル
-    def render_candidate_selector_panel():  # uses session_state
+    def render_candidate_selector_panel(right_container):  # uses session_state
         cands = st.session_state.get("fuzzy_candidates", [])
         base_query = st.session_state.get("dialog_extracted_title") or st.session_state.get("pending_user_input")
-        st.subheader("🔎 候補が複数見つかりました")
-        st.write("正しい作品を選んでください。選択後に生成を開始します。")
-        st.caption(f"検索語: {base_query}")
+        with right_container:
+            st.subheader("🔎 候補が複数見つかりました")
+            st.write("正しい作品を選んでください。選択後に生成を開始します。")
+            st.caption(f"検索語: {base_query}")
+            st.caption(f"候補件数: {len(cands)} 件")
 
-        options = [c["display"] for c in cands]
-        idx = st.radio("候補", options=range(len(options)), format_func=lambda i: options[i], index=0, key="cand_idx")
-        cols = st.columns([1, 1])
-        with cols[0]:
-            if st.button("この作品で生成する", type="primary"):
-                chosen = cands[idx]
-                st.session_state["chosen_title"] = chosen["title"]
-                st.session_state["awaiting_candidate_selection"] = False
-                st.session_state["start_generation"] = True
-                st.rerun()
-        with cols[1]:
-            if st.button("上位候補で生成"):
-                # 上位候補または抽出タイトルで続行
-                fallback = cands[0]["title"] if cands else (st.session_state.get("dialog_extracted_title") or "")
-                st.session_state["chosen_title"] = fallback
-                st.session_state["awaiting_candidate_selection"] = False
-                st.session_state["start_generation"] = True
-                st.rerun()
+            if not cands:
+                st.info("候補が見つかりませんでした。検索条件を変えてお試しください。")
+                return
+
+            options = [c["display"] for c in cands]
+            idx = st.radio(
+                "候補",
+                options=range(len(options)),
+                format_func=lambda i: options[i],
+                index=0,
+                key="cand_idx",
+            )
+            cols = st.columns([1, 1])
+            with cols[0]:
+                if st.button("この作品で生成する", type="primary"):
+                    chosen = cands[idx]
+                    st.session_state["chosen_title"] = chosen["title"]
+                    st.session_state["awaiting_candidate_selection"] = False
+                    st.session_state["start_generation"] = True
+                    st.rerun()
+            with cols[1]:
+                if st.button("上位候補で生成"):
+                    # 上位候補または抽出タイトルで続行
+                    fallback = cands[0]["title"] if cands else (st.session_state.get("dialog_extracted_title") or "")
+                    st.session_state["chosen_title"] = fallback
+                    st.session_state["awaiting_candidate_selection"] = False
+                    st.session_state["start_generation"] = True
+                    st.rerun()
 
     # 旧フラグ（モーダル用）が残っていれば新フラグに移行
     if st.session_state.get("open_candidate_dialog"):
@@ -228,7 +240,7 @@ def main():
             st.subheader("🕸️ GraphRAGを使用した生成")
             st.info("候補を選択するとGraphRAGの生成を開始します。")
         st.markdown("---")
-        render_candidate_selector_panel()
+        render_candidate_selector_panel(col2.container())
         st.stop()
 
     # 実行ボタン押下時の処理（まず素のLLM→その後に厳格/抽出/あいまい→必要なら候補選択→GraphRAG）
@@ -250,35 +262,56 @@ def main():
                         stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
 
                 # 曖昧性解消（候補選択）を完了させる。解決後に生成を開始する。
-                with st.spinner("グラフから漫画名を検索中..."):
-                    # 1) 厳格検索（入力テキスト）
-                    strict_res = strict_search(input_text, min_total_volumes=int(min_vol))
+                # スピナーと結果UIは右カラムに表示
+                with col2.container():
+                    with st.spinner("グラフから漫画名を検索中..."):
+                        # 1) 厳格検索（入力テキスト）
+                        strict_res = strict_search(input_text, min_total_volumes=int(min_vol))
 
-                    selected_title_for_run: str | None = None
-                    if strict_res.get("nodes"):
-                        selected_title_for_run = None  # 入力テキストでそのまま実行
-                    else:
-                        # 2) タイトル抽出 → 厳格
-                        extracted = extract_formal_title(input_text)
-                        strict2 = strict_search(extracted, min_total_volumes=int(min_vol))
-                        if strict2.get("nodes"):
-                            selected_title_for_run = extracted
+                        selected_title_for_run: str | None = None
+                        if strict_res.get("nodes"):
+                            selected_title_for_run = None  # 入力テキストでそのまま実行
                         else:
-                            # 3) あいまい検索
-                            fz = fuzzy_search(extracted)
-                            raw_candidates = (
-                                fz.get("results")
-                                or [node for node in fz.get("nodes") if node.get("type") == "work"]
-                                or []
-                            )
-                            processed = []
-                            for c in raw_candidates:
-                                props = (c.get("properties") or {}) if isinstance(c, dict) else {}
-                                title = props.get("title")
-                                score = props.get("similarity_score")
-                                disp = f"{title}"
-                                if title:
-                                    processed.append({"title": title, "score": score, "display": disp})
+                            # 2) タイトル抽出 → 厳格
+                            extracted = extract_formal_title(input_text)
+                            strict2 = strict_search(extracted, min_total_volumes=int(min_vol))
+                            if strict2.get("nodes"):
+                                selected_title_for_run = extracted
+                            else:
+                                # 3) あいまい検索
+                                fz = fuzzy_search(extracted)
+                                # さまざまなレスポンス形状に対応
+                                raw_candidates = fz.get("results") or fz.get("nodes") or []
+                                # nodes配列の場合はworkだけに絞る
+                                if (
+                                    raw_candidates
+                                    and isinstance(raw_candidates[0], dict)
+                                    and "type" in raw_candidates[0]
+                                ):
+                                    raw_candidates = [n for n in raw_candidates if n.get("type") == "work"]
+
+                                processed = []
+                                for c in raw_candidates:
+                                    title = None
+                                    score = None
+                                    if isinstance(c, dict):
+                                        props = c.get("properties") or {}
+                                        # フラット形式 or properties形式 双方対応
+                                        title = (
+                                            props.get("title")
+                                            or c.get("title")
+                                            or props.get("name")
+                                            or c.get("name")
+                                            or props.get("work_title")
+                                        )
+                                        score = (
+                                            props.get("similarity_score") or c.get("similarity_score") or c.get("score")
+                                        )
+                                    elif isinstance(c, str):
+                                        title = c
+                                    if title:
+                                        disp = f"{title}" if score is None else f"{title} (score: {score:.3f})"
+                                        processed.append({"title": title, "score": score, "display": disp})
 
                     # 曖昧性の結果に応じて分岐
                     if "processed" in locals() and len(processed) > 1:
@@ -289,9 +322,9 @@ def main():
                         st.session_state["pending_user_input"] = input_text
                         st.session_state["pending_min_vol"] = int(min_vol)
                         st.session_state["pending_show_raw_llm"] = bool(show_raw_llm)
-                        # 現在のランでパネル表示へ移行
+                        # 現在のランで右カラムにパネル表示へ移行
                         st.markdown("---")
-                        render_candidate_selector_panel()
+                        render_candidate_selector_panel(col2.container())
                         st.stop()
                     else:
                         # 候補0/1件 → そのまま生成開始
