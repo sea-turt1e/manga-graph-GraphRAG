@@ -69,7 +69,7 @@ class MangaGraphClient:
         return self._make_request("GET", "/api/v1/magazines")
 
     # Media Arts Database endpoints
-    def search_media_arts(self, query: str, limit: int = 20) -> Dict[str, Any]:
+    def search_media_arts(self, query: str, limit: int = 50) -> Dict[str, Any]:
         """Search media arts database"""
         params = {"q": query, "limit": limit}
         return self._make_request("GET", "/api/v1/media-arts/search", params=params)
@@ -84,12 +84,12 @@ class MangaGraphClient:
         params = {"limit": limit}
         return self._make_request("GET", "/api/v1/media-arts/magazines", params=params)
 
-    def fulltext_search(self, query: str, search_type: str = "simple_query_string", limit: int = 20) -> Dict[str, Any]:
+    def fulltext_search(self, query: str, search_type: str = "simple_query_string", limit: int = 50) -> Dict[str, Any]:
         """Perform full-text search"""
         params = {"q": query, "search_type": search_type, "limit": limit}
         return self._make_request("GET", "/api/v1/media-arts/fulltext-search", params=params)
 
-    def search_with_related(self, query: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
+    def search_with_related(self, query: str, limit: int = 50, include_related: bool = True) -> Dict[str, Any]:
         """Search with related works"""
         params = {"q": query, "limit": limit, "include_related": include_related}
         return self._make_request("GET", "/api/v1/media-arts/search-with-related", params=params)
@@ -106,7 +106,7 @@ class MangaGraphClient:
         return self._make_request("GET", "/api/v1/media-arts/magazine-relationships", params=params)
 
     # Neo4j endpoints
-    def search_neo4j(self, query: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
+    def search_neo4j(self, query: str, limit: int = 50, include_related: bool = True) -> Dict[str, Any]:
         """Search using Neo4j"""
         # Added sort_total_volumes & min_total_volumes per requirement
         params = {
@@ -174,8 +174,6 @@ class MangaGraphRAG:
     def __init__(self, api_base_url: str = "http://localhost:8000"):
         """Initialize the GraphRAG system"""
         self.client = MangaGraphClient(api_base_url)
-        self.llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.7, openai_api_key=os.getenv("OPENAI_API_KEY"))
-
         # Initialize prompt templates
         self._init_prompts()
 
@@ -285,7 +283,7 @@ class MangaGraphRAG:
     def extract_entities_from_text(self, text: str) -> Dict[str, List[str]]:
         """Use LLM to extract entity candidates from natural language text"""
         try:
-            chain = self.entity_extraction_prompt | self.llm
+            chain = self.entity_extraction_prompt
             out = chain.invoke({"user_text": text})
             content = (out.content or "").strip()
             m = re.search(r"\{[\s\S]*\}", content)
@@ -363,7 +361,7 @@ class MangaGraphRAG:
         agg_nodes: List[Dict[str, Any]] = []
         agg_edges: List[Dict[str, Any]] = []
         for c in linked.get("candidates", [])[:5]:
-            res = self.client.search_neo4j(c["label"], limit=20, include_related=True)
+            res = self.client.search_neo4j(c["label"], limit=50, include_related=True)
             agg_nodes.extend(res.get("nodes", []) or [])
             agg_edges.extend(res.get("edges", []) or [])
 
@@ -428,7 +426,7 @@ class MangaGraphRAG:
                 formatted_data += f"  • {source} → {target}\n"
 
         # Step 4: Generate recommendation using LLM
-        recommendation = self.recommendation_prompt | self.llm
+        recommendation = self.recommendation_prompt
         result = recommendation.invoke({"user_query": user_text, "graph_data": formatted_data, "context": context})
 
         return {
@@ -544,7 +542,7 @@ class MangaGraphRAG:
                 formatted_data += f"  • {rel.get('source', 'N/A')} → {rel.get('target', 'N/A')}\n"
 
         # Step 5: Generate recommendation using LLM with graph data
-        recommendation = self.recommendation_prompt | self.llm
+        recommendation = self.recommendation_prompt
         result = recommendation.invoke(
             {"user_query": user_preference, "graph_data": formatted_data, "context": context}
         )
@@ -589,7 +587,7 @@ class MangaGraphRAG:
         print(f"Analyzing manga: {manga_title}")
 
         # Get comprehensive data about the manga using neo4j search
-        search_data = self.client.search_neo4j(manga_title, limit=20, include_related=True)
+        search_data = self.client.search_neo4j(manga_title, limit=50, include_related=True)
         # For additional related data, we can search with a higher limit
         related_data = self.client.search_neo4j(manga_title, limit=30, include_related=True)
 
@@ -599,7 +597,7 @@ class MangaGraphRAG:
             formatted_data += "\n\n関連情報:\n" + self.client.format_graph_response(related_data)
 
         # Generate analysis
-        analysis = self.analysis_prompt | self.llm
+        analysis = self.analysis_prompt
         result = analysis.invoke({"manga_title": manga_title, "graph_data": formatted_data})
 
         return {"analysis": result.content, "graph_data": search_data, "related_data": related_data}
@@ -637,7 +635,7 @@ class MangaGraphRAG:
                 path_data += f"\n  - {node.get('labels', ['Unknown'])[0]}: {node.get('name', node.get('title', 'N/A'))}"
 
         # Generate explanation
-        explanation = self.multi_hop_prompt | self.llm
+        explanation = self.multi_hop_prompt
         result = explanation.invoke({"start_entity": entity1, "end_entity": entity2, "path_data": path_data})
 
         return {
@@ -652,7 +650,7 @@ class MangaGraphRAG:
         print(f"Exploring lineage of: {author_name}")
 
         # Get author's works using neo4j search with author name
-        author_works = self.client.search_neo4j(author_name, limit=20, include_related=True)
+        author_works = self.client.search_neo4j(author_name, limit=50, include_related=True)
 
         # Search for connections
         connections = self.client.search_neo4j(author_name, limit=30)
@@ -682,7 +680,7 @@ class MangaGraphRAG:
         )
 
         # Generate lineage analysis
-        analysis = lineage_prompt | self.llm
+        analysis = lineage_prompt
         result = analysis.invoke({"author_name": author_name, "lineage_data": lineage_data})
 
         return {"lineage_analysis": result.content, "author_works": author_works, "connections": connections}
