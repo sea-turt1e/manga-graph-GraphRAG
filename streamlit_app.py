@@ -282,6 +282,9 @@ def main():
                                 selected_title_for_run = extracted
                             else:
                                 # 3) あいまい検索
+                                st.markdown(
+                                    "🔍 一致する漫画作品が見つからなかったため、近そうな漫画作品名をリストアップします。"
+                                )
                                 fz = fuzzy_search(extracted)
                                 # さまざまなレスポンス形状に対応
                                 raw_candidates = fz.get("results") or fz.get("nodes") or []

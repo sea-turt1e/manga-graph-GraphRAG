@@ -16,11 +16,14 @@ import os
 from typing import Any, Callable, Dict, Optional
 
 import requests
+from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 
 from prompts.manga_prompts import GraphRAGPrompts
 
 logger = logging.getLogger(__name__)
+
+load_dotenv()  # take environment variables from .env file
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
