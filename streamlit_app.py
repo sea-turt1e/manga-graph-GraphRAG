@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+from copy import deepcopy
 
 import requests
 import streamlit as st
@@ -274,6 +275,8 @@ def main():
                         else:
                             # 2) タイトル抽出 → 厳格
                             extracted = extract_formal_title(input_text)
+                            if not extracted:
+                                extracted = deepcopy(input_text)
                             strict2 = strict_search(extracted, min_total_volumes=int(min_vol))
                             if strict2.get("nodes"):
                                 selected_title_for_run = extracted

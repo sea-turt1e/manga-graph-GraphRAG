@@ -41,7 +41,7 @@ def _post_text_generation(prompt: str) -> str:
         r.raise_for_status()
     except Exception as e:
         logger.warning("text-generation error: %s", e)
-        return "不明"
+        return ""
 
     # non-streaming assumed JSON; sometimes SSE lines -> handle both
     try:
@@ -52,7 +52,7 @@ def _post_text_generation(prompt: str) -> str:
     except ValueError:
         # fallback: raw text
         return r.text.strip()[:100]
-    return "不明"
+    return ""
 
 
 def extract_formal_title(user_input: str) -> str:
@@ -73,10 +73,10 @@ def extract_formal_title(user_input: str) -> str:
         first_line = first_line[1:-1].strip()
     title = first_line
     if not title:
-        return "不明"
+        return ""
     # heuristic: avoid model echo of instruction
     if len(title) > 40 and " " in title and "ユーザー" in title:
-        return "不明"
+        return ""
     return title
 
 
