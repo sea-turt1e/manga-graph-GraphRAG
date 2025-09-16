@@ -4,7 +4,7 @@
 Steps implemented:
 1. Extract single formal manga title via /text-generation/generate (LLM prompt)
 2. Try strict search /api/v1/neo4j/search
-3. If no nodes, fallback to /api/v1/neo4j/search-fuzzy
+3. If no nodes, fallback to /api/v1/neo4j/vector/title-similarity
 4. If fuzzy used, re-query strict search with best candidate's properties.title
 5. Build context + call GraphRAG recommendation prompt
 """
@@ -28,7 +28,8 @@ load_dotenv()  # take environment variables from .env file
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
 STRICT_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search"
-FUZZY_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search-fuzzy"
+# Use vector-based title similarity API instead of legacy search-fuzzy
+TITLE_SIMILARITY_ENDPOINT = f"{API_BASE}/api/v1/neo4j/vector/title-similarity"
 DEFAULT_GEN_BODY = {"max_tokens": 1000, "temperature": 0.7, "model": "gpt-4.1-nano"}
 
 
@@ -79,13 +80,20 @@ def extract_formal_title(user_input: str) -> str:
 
 
 def strict_search(
-    title: str, limit: int = 50, include_related: bool = True, min_total_volumes: int = 5
+    title: str,
+    limit: int = 50,
+    include_related: bool = True,
+    include_same_publisher_other_magazines: bool = True,
+    same_publisher_other_magazines_limit: int = 5,
+    min_total_volumes: int = 5,
 ) -> Dict[str, Any]:
     # Added sort_total_volumes & min_total_volumes per requirement
     params = {
         "q": title,
         "limit": limit,
         "include_related": str(include_related).lower(),
+        "include_same_publisher_other_magazines": str(include_same_publisher_other_magazines).lower(),
+        "same_publisher_other_magazines_limit": same_publisher_other_magazines_limit,
         "sort_total_volumes": "desc",
         "min_total_volumes": min_total_volumes,
     }
@@ -101,6 +109,11 @@ def strict_search(
 def fuzzy_search(
     query: str, limit: int = 5, similarity_threshold: float = 0.8, embedding_method: str = "huggingface"
 ) -> Dict[str, Any]:
+    """Vector-based title similarity search.
+
+    Kept function name for compatibility with callers, but internally this
+    now calls /api/v1/neo4j/vector/title-similarity.
+    """
     params = {
         "q": query,
         "limit": limit,
@@ -108,11 +121,11 @@ def fuzzy_search(
         "embedding_method": embedding_method,
     }
     try:
-        r = requests.get(FUZZY_SEARCH_ENDPOINT, params=params, timeout=60)
+        r = requests.get(TITLE_SIMILARITY_ENDPOINT, params=params, timeout=60)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        logger.warning("fuzzy search error: %s", e)
+        logger.warning("title similarity search error: %s", e)
         return {}
 
 
@@ -221,8 +234,18 @@ def fetch_graph_for_user_input(
     if not nodes:
         # 3. fuzzy search
         fuzzy_res = fuzzy_search(extracted_title)
-        print(f"Fuzzy search results: {json.dumps(fuzzy_res)[:200]}")
-        candidates = fuzzy_res.get("results") or fuzzy_res.get("nodes") or []
+        print(f"Title similarity results: {json.dumps(fuzzy_res)[:200]}")
+        # Tolerant extraction of candidate list across possible response shapes
+        if isinstance(fuzzy_res, list):
+            candidates = fuzzy_res
+        else:
+            candidates = (
+                fuzzy_res.get("results")
+                or fuzzy_res.get("nodes")
+                or fuzzy_res.get("matches")
+                or fuzzy_res.get("items")
+                or []
+            )
         if candidates:
             used_fuzzy = True
             # 4. pick highest similarity
