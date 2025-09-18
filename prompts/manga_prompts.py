@@ -164,14 +164,13 @@ class GraphRAGPrompts:
     def get_recommendation_prompt() -> PromptTemplate:
         """Get prompt template for manga recommendations"""
         return PromptTemplate(
-            input_variables=["user_query", "graph_data", "context"],
+            input_variables=["user_query", "context"],
             template="""# グラフDBを利用した漫画推薦タスク
 以下のユーザーの好みと、グラフデータベースから取得した情報を基に、
 最適な漫画の推薦を行ってください。
 
 ## ユーザーの好み
 {user_query}
-{graph_data}
 
 ## 生成時の考慮点
 推薦する際は以下の点を考慮してください：
@@ -180,7 +179,7 @@ class GraphRAGPrompts:
 - 理想は5作品のうち以下のような割合とする。（必須ではない）
   - 2作品は同じ作者の別作品
   - 2作品は同雑誌の別作品（ただし作者が'不明'の場合は使用しない）
-  - 同出版社の他誌に掲載された作品
+  - 1作品は同出版社の他誌に掲載された作品
 
 ##### グラフから抽出されたデータは以下のとおりです。
 {context}

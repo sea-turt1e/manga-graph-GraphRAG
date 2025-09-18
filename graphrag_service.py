@@ -354,6 +354,34 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+def build_debug_graph_edges(graph: Dict[str, Any]) -> str:
+    """Build a full, non-truncated edge list for debugging in the form:
+    ・source -[TYPE]-> target
+
+    Edges are sorted by relation type (created, published, published_by, others),
+    then by source and target display names for readability.
+    """
+    nodes = graph.get("nodes", []) or []
+    edges = graph.get("edges", []) or []
+    name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id") is not None}
+
+    type_order = {"created": 0, "published": 1, "published_by": 2}
+
+    def key(e: Dict[str, Any]):
+        t = e.get("type", "")
+        s = name_cache.get(e.get("source"), str(e.get("source")))
+        d = name_cache.get(e.get("target"), str(e.get("target")))
+        return (type_order.get(t, 3), s, d)
+
+    lines: list[str] = []
+    for e in sorted(edges, key=key):
+        s = name_cache.get(e.get("source"), str(e.get("source")))
+        d = name_cache.get(e.get("target"), str(e.get("target")))
+        rel = e.get("type", "REL")
+        lines.append(f"・{s} -[{rel}]-> {d}")
+    return "\n".join(lines)
+
+
 def fetch_graph_for_user_input(
     user_input: str, min_total_volumes: int = 5, selected_title: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -461,12 +489,9 @@ class GraphRAGRecommender:
         token_callback: optional callable receiving incremental text chunks.
         Returns the full generated text.
         """
-        # graph_text = format_graph_data(graph)
-        graph_text = ""  # omit detailed graph data to save token
         context = build_graph_context(graph)
         prompt_text = self.rec_prompt.format(
             user_query=user_input,
-            graph_data=graph_text,
             context=context,
         )
         print(f"GraphRAG Prompt text:\n{prompt_text}\n")
@@ -531,6 +556,7 @@ def run_graphrag_pipeline(
         "fuzzy_best_title": graph.get("_fuzzy_best_title"),
         "user_selected_candidate": graph.get("_user_selected_candidate", False),
         "graph_summary": build_graph_context(graph),
+        "graph_debug": build_debug_graph_edges(graph),
         "recommendation": rec_text,
         "raw_graph": graph,
     }
