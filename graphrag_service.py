@@ -139,37 +139,27 @@ def _node_label(node: Dict[str, Any]) -> str:
 def build_graph_context(graph: Dict[str, Any]) -> str:
     nodes = graph.get("nodes", []) or []
     edges = graph.get("edges", []) or []
-    node_count = graph.get("node_count", len(nodes))
-    edge_count = graph.get("relationship_count", len(edges))
-    ctx = [f"ノード数: {node_count}", f"関係数: {edge_count}"]
+    # node_count = graph.get("node_count", len(nodes))
+    # edge_count = graph.get("relationship_count", len(edges))
+    # ctx = [f"ノード数: {node_count}", f"関係数: {edge_count}"]
 
     # Group nodes by label/type
-    by_type: Dict[str, int] = {}
-    sample_by_type: Dict[str, list] = {}
-    SAMPLE_LIMIT = 5  # 各タイプのサンプル最大件数
-    for n in nodes:
-        t = n.get("type") or (n.get("labels") or ["Unknown"])[0]
-        by_type[t] = by_type.get(t, 0) + 1
-        # サンプル収集（重複は避ける）
-        label = _node_label(n)
-        if t not in sample_by_type:
-            sample_by_type[t] = []
-        if label and label not in sample_by_type[t] and len(sample_by_type[t]) < SAMPLE_LIMIT:
-            sample_by_type[t].append(label)
-    if by_type:
-        ctx.append("\nノードタイプ内訳:")
-        for t, cnt in sorted(by_type.items(), key=lambda x: -x[1]):
-            samples = sample_by_type.get(t) or []
-            if samples:
-                ctx.append(f"- {t}: {cnt}件 (例: {', '.join(samples)})")
-            else:
-                ctx.append(f"- {t}: {cnt}件")
+    # by_type: Dict[str, int] = {}
+    # for n in nodes:
+    #     t = n.get("type") or (n.get("labels") or ["Unknown"])[0]
+    #     by_type[t] = by_type.get(t, 0) + 1
+    # if by_type:
+    #     ctx.append("\nノードタイプ内訳:")
+    #     for t, cnt in sorted(by_type.items(), key=lambda x: -x[1]):
+    #         ctx.append(f"- {t}: {cnt}件")
 
     # Sample edges
+    ctx = []
     if edges:
-        ctx.append("\n関係サンプル:")
+        NUM_EDGES_TO_SHOW = 100
+        ctx.append("\n関係性:")
         node_name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id")}
-        for e in edges[:10]:
+        for e in edges[:NUM_EDGES_TO_SHOW]:
             s = node_name_cache.get(e.get("source"), str(e.get("source")))
             t = node_name_cache.get(e.get("target"), str(e.get("target")))
             rtype = e.get("type", "REL")
@@ -181,13 +171,13 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
 def format_graph_data(graph: Dict[str, Any]) -> str:
     nodes = graph.get("nodes", []) or []
     edges = graph.get("edges", []) or []
-    out = ["取得したグラフデータ:", f"ノード数: {len(nodes)}", f"関係数: {len(edges)}", ""]
-    out.append("ノード一覧(最大50):")
-    for n in nodes[:50]:
-        out.append(f"- {_node_label(n)}")
-    out.append("\n関係(最大50):")
+    out = ["取得したグラフデータ:", ""]
+    # out.append("ノード一覧(最大50):")
+    # for n in nodes[:30]:
+    #     out.append(f"- {_node_label(n)}")
+    out.append("\n関係(最大100件):")
     name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id")}
-    for e in edges[:50]:
+    for e in edges[:100]:
         s = name_cache.get(e.get("source"), e.get("source"))
         t = name_cache.get(e.get("target"), e.get("target"))
         edge_type = e.get("type", "REL")
@@ -302,13 +292,15 @@ class GraphRAGRecommender:
         token_callback: optional callable receiving incremental text chunks.
         Returns the full generated text.
         """
-        graph_text = format_graph_data(graph)
+        # graph_text = format_graph_data(graph)
+        graph_text = ""  # omit detailed graph data to save token
         context = build_graph_context(graph)
         prompt_text = self.rec_prompt.format(
             user_query=user_input,
             graph_data=graph_text,
             context=context,
         )
+        print(f"GraphRAG Prompt text:\n{prompt_text}\n")
         body = {
             "text": prompt_text,
             "model": self.model,
