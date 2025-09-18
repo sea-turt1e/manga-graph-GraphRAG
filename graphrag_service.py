@@ -81,7 +81,7 @@ def extract_formal_title(user_input: str) -> str:
 
 def strict_search(
     title: str,
-    limit: int = 50,
+    limit: int = 100,
     include_related: bool = True,
     include_same_publisher_other_magazines: bool = True,
     same_publisher_other_magazines_limit: int = 5,
@@ -137,35 +137,204 @@ def _node_label(node: Dict[str, Any]) -> str:
 
 
 def build_graph_context(graph: Dict[str, Any]) -> str:
+    """Build a structured context string from graph data for prompt consumption.
+
+    Output format example:
+
+    クエリ: Hunter×hunter
+    クエリの作品の作者: 富樫義博
+    クエリが掲載された雑誌: 週刊少年ジャンプ
+    クエリが掲載された雑誌の出版社: 集英社
+
+    ## {クエリの作品の作者}の別作品
+    - てんで性悪キューピッド
+    - 幽★遊★白書
+
+    ## 同雑誌の別作品
+    - ダンダダン = DAN DA DAN（作者: 龍幸伸、雑誌: 週刊少年ジャンプ、 出版社: 集英社）
+    - 神のまにまに（作者: 猗笠怜司、雑誌: 週刊少年ジャンプ、 出版社: 集英社）
+
+    ## 同出版社の他誌に掲載された作品
+    - 末永くよろしくお願いします（作者: 池ジュン子、雑誌: 花とゆめ、 出版社: 集英社）
+    """
     nodes = graph.get("nodes", []) or []
     edges = graph.get("edges", []) or []
-    # node_count = graph.get("node_count", len(nodes))
-    # edge_count = graph.get("relationship_count", len(edges))
-    # ctx = [f"ノード数: {node_count}", f"関係数: {edge_count}"]
 
-    # Group nodes by label/type
-    # by_type: Dict[str, int] = {}
-    # for n in nodes:
-    #     t = n.get("type") or (n.get("labels") or ["Unknown"])[0]
-    #     by_type[t] = by_type.get(t, 0) + 1
-    # if by_type:
-    #     ctx.append("\nノードタイプ内訳:")
-    #     for t, cnt in sorted(by_type.items(), key=lambda x: -x[1]):
-    #         ctx.append(f"- {t}: {cnt}件")
+    # Cache: id -> display name; also keep raw node for later
+    id_to_name: Dict[Any, str] = {n.get("id"): _node_label(n) for n in nodes if n.get("id") is not None}
+    id_to_node: Dict[Any, Dict[str, Any]] = {n.get("id"): n for n in nodes if n.get("id") is not None}
 
-    # Sample edges
-    ctx = []
-    if edges:
-        NUM_EDGES_TO_SHOW = 100
-        ctx.append("\n関係性:")
-        node_name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id")}
-        for e in edges[:NUM_EDGES_TO_SHOW]:
-            s = node_name_cache.get(e.get("source"), str(e.get("source")))
-            t = node_name_cache.get(e.get("target"), str(e.get("target")))
-            rtype = e.get("type", "REL")
-            ctx.append(f"  • {s} -[{rtype}]-> {t}")
+    def norm(s: str) -> str:
+        return (s or "").strip()
 
-    return "\n".join(ctx)
+    query_title = norm(graph.get("_extracted_title") or "")
+
+    # Identify the query work node id by name match if possible (exact match on display label)
+    query_work_id = None
+    if query_title:
+        for nid, name in id_to_name.items():
+            if name == query_title:
+                query_work_id = nid
+                break
+        # fallback: try properties.title exact match if display name differs
+        if query_work_id is None:
+            for nid, node in id_to_node.items():
+                props = node.get("properties", {}) or {}
+                if norm(props.get("title") or props.get("name")) == query_title:
+                    query_work_id = nid
+                    break
+
+    # Index edges by type for quick lookup
+    created_edges = [e for e in edges if e.get("type") == "created"]
+    published_edges = [e for e in edges if e.get("type") == "published"]
+    published_by_edges = [e for e in edges if e.get("type") == "published_by"]
+
+    # Helper: collect authors for a work id
+    def authors_of(work_id: Any) -> list[str]:
+        authors = []
+        for e in created_edges:
+            if e.get("target") == work_id:
+                a = id_to_name.get(e.get("source"))
+                if a and a not in authors:
+                    authors.append(a)
+        return authors
+
+    # Helper: collect magazines for a work id
+    def magazines_of(work_id: Any) -> list[Any]:
+        mags = []
+        for e in published_edges:
+            if e.get("target") == work_id:
+                mid = e.get("source")
+                if mid is not None and mid not in mags:
+                    mags.append(mid)
+        return mags
+
+    # Helper: publisher of a magazine id
+    def publisher_of(mag_id: Any) -> Optional[tuple[Any, str]]:
+        for e in published_by_edges:
+            if e.get("source") == mag_id:
+                pid = e.get("target")
+                return pid, id_to_name.get(pid, "")
+        return None
+
+    # Derive query's author, magazine, publisher
+    query_author_name = ""
+    query_mag_id = None
+    query_mag_name = ""
+    query_publisher_id = None
+    query_publisher_name = ""
+
+    if query_work_id is not None:
+        a_list = authors_of(query_work_id)
+        if a_list:
+            query_author_name = a_list[0]
+        mags = magazines_of(query_work_id)
+        if mags:
+            query_mag_id = mags[0]
+            query_mag_name = id_to_name.get(query_mag_id, "")
+            pub = publisher_of(query_mag_id)
+            if pub:
+                query_publisher_id, query_publisher_name = pub[0], pub[1]
+
+    # Build sections
+    lines: list[str] = []
+    if query_title:
+        lines.append(f"クエリ: {query_title}")
+    if query_author_name:
+        lines.append(f"クエリの作品の作者: {query_author_name}")
+    if query_mag_name:
+        lines.append(f"クエリが掲載された雑誌: {query_mag_name}")
+    if query_publisher_name:
+        lines.append(f"クエリが掲載された雑誌の出版社: {query_publisher_name}")
+
+    # Section A: author's other works
+    if query_author_name:
+        # get author's node id via created_edges where source name == author
+        author_ids = {e.get("source") for e in created_edges if id_to_name.get(e.get("source")) == query_author_name}
+        other_works: list[str] = []
+        for e in created_edges:
+            if e.get("source") in author_ids and e.get("target") != query_work_id:
+                wname = id_to_name.get(e.get("target"))
+                if wname and wname not in other_works:
+                    other_works.append(wname)
+        lines.append("")
+        lines.append(f"## {query_author_name}の別作品")
+        if other_works:
+            for t in other_works[:10]:
+                lines.append(f"- {t}")
+        else:
+            lines.append("- なし")
+
+    # Section B: same magazine other works
+    if query_mag_id is not None:
+        same_mag_works: list[Any] = []
+        for e in published_edges:
+            if e.get("source") == query_mag_id and e.get("target") != query_work_id:
+                wid = e.get("target")
+                if wid not in same_mag_works:
+                    same_mag_works.append(wid)
+        lines.append("")
+        lines.append("## 同雑誌の別作品")
+        if same_mag_works:
+            for wid in same_mag_works[:10]:
+                title = id_to_name.get(wid, "")
+                auths = authors_of(wid)
+                author_txt = "、".join(auths) if auths else "不明"
+                pub_txt = query_publisher_name or ""
+                mag_txt = query_mag_name or ""
+                # show: タイトル（作者: X、雑誌: Y、 出版社: Z）
+                meta = []
+                meta.append(f"作者: {author_txt}")
+                if mag_txt:
+                    meta.append(f"雑誌: {mag_txt}")
+                if pub_txt:
+                    meta.append(f"出版社: {pub_txt}")
+                meta_str = "、".join(meta)
+                lines.append(f"- {title}（{meta_str}）")
+        else:
+            lines.append("- なし")
+
+    # Section C: same publisher other magazines
+    if query_publisher_id is not None:
+        # magazines under same publisher except the query magazine
+        other_mag_ids: list[Any] = []
+        for e in published_by_edges:
+            if e.get("target") == query_publisher_id and e.get("source") != query_mag_id:
+                mid = e.get("source")
+                if mid not in other_mag_ids:
+                    other_mag_ids.append(mid)
+        # collect works from those magazines
+        lines.append("")
+        lines.append("## 同出版社の他誌に掲載された作品")
+        collected = 0
+        for mid in other_mag_ids:
+            # works published by this magazine
+            for e in published_edges:
+                if e.get("source") == mid:
+                    wid = e.get("target")
+                    # avoid duplicates and the query work
+                    if wid == query_work_id:
+                        continue
+                    title = id_to_name.get(wid, "")
+                    mag_name = id_to_name.get(mid, "")
+                    auths = authors_of(wid)
+                    author_txt = "、".join(auths) if auths else "不明"
+                    pub_txt = query_publisher_name or id_to_name.get(query_publisher_id, "")
+                    meta = [f"作者: {author_txt}"]
+                    if mag_name:
+                        meta.append(f"雑誌: {mag_name}")
+                    if pub_txt:
+                        meta.append(f"出版社: {pub_txt}")
+                    lines.append(f"- {title}（{'、'.join(meta)}）")
+                    collected += 1
+                    if collected >= 10:
+                        break
+            if collected >= 10:
+                break
+        if collected == 0:
+            lines.append("- なし")
+
+    return "\n".join(lines)
 
 
 def format_graph_data(graph: Dict[str, Any]) -> str:
@@ -183,6 +352,34 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
         edge_type = e.get("type", "REL")
         out.append(f"- {s} -> {t} ({edge_type})")
     return "\n".join(out)
+
+
+def build_debug_graph_edges(graph: Dict[str, Any]) -> str:
+    """Build a full, non-truncated edge list for debugging in the form:
+    ・source -[TYPE]-> target
+
+    Edges are sorted by relation type (created, published, published_by, others),
+    then by source and target display names for readability.
+    """
+    nodes = graph.get("nodes", []) or []
+    edges = graph.get("edges", []) or []
+    name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id") is not None}
+
+    type_order = {"created": 0, "published": 1, "published_by": 2}
+
+    def key(e: Dict[str, Any]):
+        t = e.get("type", "")
+        s = name_cache.get(e.get("source"), str(e.get("source")))
+        d = name_cache.get(e.get("target"), str(e.get("target")))
+        return (type_order.get(t, 3), s, d)
+
+    lines: list[str] = []
+    for e in sorted(edges, key=key):
+        s = name_cache.get(e.get("source"), str(e.get("source")))
+        d = name_cache.get(e.get("target"), str(e.get("target")))
+        rel = e.get("type", "REL")
+        lines.append(f"・{s} -[{rel}]-> {d}")
+    return "\n".join(lines)
 
 
 def fetch_graph_for_user_input(
@@ -292,12 +489,9 @@ class GraphRAGRecommender:
         token_callback: optional callable receiving incremental text chunks.
         Returns the full generated text.
         """
-        # graph_text = format_graph_data(graph)
-        graph_text = ""  # omit detailed graph data to save token
         context = build_graph_context(graph)
         prompt_text = self.rec_prompt.format(
             user_query=user_input,
-            graph_data=graph_text,
             context=context,
         )
         print(f"GraphRAG Prompt text:\n{prompt_text}\n")
@@ -362,6 +556,7 @@ def run_graphrag_pipeline(
         "fuzzy_best_title": graph.get("_fuzzy_best_title"),
         "user_selected_candidate": graph.get("_user_selected_candidate", False),
         "graph_summary": build_graph_context(graph),
+        "graph_debug": build_debug_graph_edges(graph),
         "recommendation": rec_text,
         "raw_graph": graph,
     }

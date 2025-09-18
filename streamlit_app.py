@@ -168,7 +168,8 @@ def main():
                                 "relationship_count": result.get("raw_graph", {}).get("relationship_count"),
                             }
                         )
-                        st.text(result.get("graph_summary"))
+                        st.caption("グラフ情報")
+                        st.text(result.get("graph_debug"))
                 except ValueError as e:
                     st.error(str(e))
                 except Exception as e:  # noqa: BLE001
