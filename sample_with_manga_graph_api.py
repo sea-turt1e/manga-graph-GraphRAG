@@ -31,6 +31,14 @@ class MangaGraphClient:
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
+        backend_api_key = os.getenv("BACKEND_API_KEY", "").strip()
+        if backend_api_key:
+            self.session.headers.update(
+                {
+                    "Authorization": f"Bearer {backend_api_key}",
+                    "X-API-Key": backend_api_key,
+                }
+            )
 
     def _make_request(
         self,

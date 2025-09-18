@@ -17,13 +17,26 @@ logger = logging.getLogger(__name__)
 st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide")
 load_dotenv()
 
+# Optional API key for backend
+BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "").strip()
+
+
+def _auth_headers(extra: dict | None = None) -> dict:
+    headers: dict = {}
+    if BACKEND_API_KEY:
+        headers["Authorization"] = f"Bearer {BACKEND_API_KEY}"
+    headers["X-API-Key"] = BACKEND_API_KEY
+    if extra:
+        headers.update(extra)
+    return headers
+
 
 def stream_generate(text, container, title):
     """APIからストリーミングレスポンスを取得して表示"""
     try:
         api_base = os.getenv("API_BASE", "http://localhost:8000")
         url = f"{api_base}/text-generation/generate"
-        headers = {"Content-Type": "application/json"}
+        headers = _auth_headers({"Content-Type": "application/json"})
         data = {"text": text, "streaming": "true"}
 
         # ストリーミングレスポンスを処理
@@ -396,7 +409,7 @@ def main():
 
 def check_server_connection(api_base: str):
     try:
-        response = requests.get(f"{api_base}/health", timeout=5)
+        response = requests.get(f"{api_base}/health", headers=_auth_headers(), timeout=5)
         if response.status_code == 200:
             st.success("✅ APIサーバーに正常に接続できます")
         else:
