@@ -32,11 +32,33 @@ STRICT_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search"
 TITLE_SIMILARITY_ENDPOINT = f"{API_BASE}/api/v1/neo4j/vector/title-similarity"
 DEFAULT_GEN_BODY = {"max_tokens": 1000, "temperature": 0.7, "model": "gpt-4.1-nano"}
 
+# Optional API key for backend auth
+BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "").strip()
+
+
+def _auth_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Compose request headers with optional Authorization.
+
+    Assumes backend expects Authorization: Bearer <BACKEND_API_KEY>.
+    """
+    headers: Dict[str, str] = {}
+    if BACKEND_API_KEY:
+        headers["Authorization"] = f"Bearer {BACKEND_API_KEY}"
+        headers["X-API-Key"] = BACKEND_API_KEY
+    if extra:
+        headers.update(extra)
+    return headers
+
 
 def _post_text_generation(prompt: str) -> str:
     body = {**DEFAULT_GEN_BODY, "text": prompt}
     try:
-        r = requests.post(TEXT_GEN_ENDPOINT, json=body, timeout=60)
+        r = requests.post(
+            TEXT_GEN_ENDPOINT,
+            json=body,
+            headers=_auth_headers({"Content-Type": "application/json"}),
+            timeout=60,
+        )
         r.raise_for_status()
     except Exception as e:
         logger.warning("text-generation error: %s", e)
@@ -98,7 +120,7 @@ def strict_search(
         "min_total_volumes": min_total_volumes,
     }
     try:
-        r = requests.get(STRICT_SEARCH_ENDPOINT, params=params, timeout=60)
+        r = requests.get(STRICT_SEARCH_ENDPOINT, params=params, headers=_auth_headers(), timeout=60)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -121,7 +143,7 @@ def fuzzy_search(
         "embedding_method": embedding_method,
     }
     try:
-        r = requests.get(TITLE_SIMILARITY_ENDPOINT, params=params, timeout=60)
+        r = requests.get(TITLE_SIMILARITY_ENDPOINT, params=params, headers=_auth_headers(), timeout=60)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -504,7 +526,13 @@ class GraphRAGRecommender:
         }
         full_text = ""
         try:
-            with requests.post(TEXT_GEN_ENDPOINT, json=body, timeout=180, stream=True) as r:
+            with requests.post(
+                TEXT_GEN_ENDPOINT,
+                json=body,
+                headers=_auth_headers({"Content-Type": "application/json"}),
+                timeout=180,
+                stream=True,
+            ) as r:
                 r.raise_for_status()
                 buffer = ""
                 for chunk in r.iter_content(chunk_size=None, decode_unicode=True):
