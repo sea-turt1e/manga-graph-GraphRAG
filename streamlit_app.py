@@ -275,7 +275,7 @@ def main():
                         else:
                             # 2) タイトル抽出 → 厳格
                             extracted = extract_formal_title(input_text)
-                            if not extracted:
+                            if not extracted or extracted == 'data: {"text": ""}':
                                 extracted = deepcopy(input_text)
                             strict2 = strict_search(extracted, min_total_volumes=int(min_vol))
                             if strict2.get("nodes"):
@@ -298,25 +298,18 @@ def main():
 
                                 processed = []
                                 for c in raw_candidates:
-                                    title = None
+                                    title = ""
                                     score = None
                                     if isinstance(c, dict):
-                                        props = c.get("properties") or {}
-                                        # フラット形式 or properties形式 双方対応
-                                        title = (
-                                            props.get("title")
-                                            or c.get("title")
-                                            or props.get("name")
-                                            or c.get("name")
-                                            or props.get("work_title")
-                                        )
-                                        score = (
-                                            props.get("similarity_score") or c.get("similarity_score") or c.get("score")
-                                        )
+                                        title = c.get("title", "")
+                                        score = c.get("similarity_score", 0)
                                     elif isinstance(c, str):
                                         title = c
                                     if title:
-                                        disp = f"{title}" if score is None else f"{title} (score: {score:.3f})"
+                                        score_percent = score * 100
+                                        disp = (
+                                            f"{title}" if score is None else f"{title} (類似度: {score_percent:.1f}%)"
+                                        )
                                         processed.append({"title": title, "score": score, "display": disp})
 
                     # 曖昧性の結果に応じて分岐

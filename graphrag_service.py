@@ -4,7 +4,7 @@
 Steps implemented:
 1. Extract single formal manga title via /text-generation/generate (LLM prompt)
 2. Try strict search /api/v1/neo4j/search
-3. If no nodes, fallback to /api/v1/neo4j/search-fuzzy
+3. If no nodes, fallback to /api/v1/neo4j/vector/title-similarity
 4. If fuzzy used, re-query strict search with best candidate's properties.title
 5. Build context + call GraphRAG recommendation prompt
 """
@@ -28,7 +28,8 @@ load_dotenv()  # take environment variables from .env file
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
 STRICT_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search"
-FUZZY_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/neo4j/search-fuzzy"
+# Use vector-based title similarity API instead of legacy search-fuzzy
+TITLE_SIMILARITY_ENDPOINT = f"{API_BASE}/api/v1/neo4j/vector/title-similarity"
 DEFAULT_GEN_BODY = {"max_tokens": 1000, "temperature": 0.7, "model": "gpt-4.1-nano"}
 
 
@@ -79,13 +80,20 @@ def extract_formal_title(user_input: str) -> str:
 
 
 def strict_search(
-    title: str, limit: int = 50, include_related: bool = True, min_total_volumes: int = 5
+    title: str,
+    limit: int = 50,
+    include_related: bool = True,
+    include_same_publisher_other_magazines: bool = True,
+    same_publisher_other_magazines_limit: int = 5,
+    min_total_volumes: int = 5,
 ) -> Dict[str, Any]:
     # Added sort_total_volumes & min_total_volumes per requirement
     params = {
         "q": title,
         "limit": limit,
         "include_related": str(include_related).lower(),
+        "include_same_publisher_other_magazines": str(include_same_publisher_other_magazines).lower(),
+        "same_publisher_other_magazines_limit": same_publisher_other_magazines_limit,
         "sort_total_volumes": "desc",
         "min_total_volumes": min_total_volumes,
     }
@@ -101,6 +109,11 @@ def strict_search(
 def fuzzy_search(
     query: str, limit: int = 5, similarity_threshold: float = 0.8, embedding_method: str = "huggingface"
 ) -> Dict[str, Any]:
+    """Vector-based title similarity search.
+
+    Kept function name for compatibility with callers, but internally this
+    now calls /api/v1/neo4j/vector/title-similarity.
+    """
     params = {
         "q": query,
         "limit": limit,
@@ -108,11 +121,11 @@ def fuzzy_search(
         "embedding_method": embedding_method,
     }
     try:
-        r = requests.get(FUZZY_SEARCH_ENDPOINT, params=params, timeout=60)
+        r = requests.get(TITLE_SIMILARITY_ENDPOINT, params=params, timeout=60)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        logger.warning("fuzzy search error: %s", e)
+        logger.warning("title similarity search error: %s", e)
         return {}
 
 
@@ -126,37 +139,27 @@ def _node_label(node: Dict[str, Any]) -> str:
 def build_graph_context(graph: Dict[str, Any]) -> str:
     nodes = graph.get("nodes", []) or []
     edges = graph.get("edges", []) or []
-    node_count = graph.get("node_count", len(nodes))
-    edge_count = graph.get("relationship_count", len(edges))
-    ctx = [f"ノード数: {node_count}", f"関係数: {edge_count}"]
+    # node_count = graph.get("node_count", len(nodes))
+    # edge_count = graph.get("relationship_count", len(edges))
+    # ctx = [f"ノード数: {node_count}", f"関係数: {edge_count}"]
 
     # Group nodes by label/type
-    by_type: Dict[str, int] = {}
-    sample_by_type: Dict[str, list] = {}
-    SAMPLE_LIMIT = 5  # 各タイプのサンプル最大件数
-    for n in nodes:
-        t = n.get("type") or (n.get("labels") or ["Unknown"])[0]
-        by_type[t] = by_type.get(t, 0) + 1
-        # サンプル収集（重複は避ける）
-        label = _node_label(n)
-        if t not in sample_by_type:
-            sample_by_type[t] = []
-        if label and label not in sample_by_type[t] and len(sample_by_type[t]) < SAMPLE_LIMIT:
-            sample_by_type[t].append(label)
-    if by_type:
-        ctx.append("\nノードタイプ内訳:")
-        for t, cnt in sorted(by_type.items(), key=lambda x: -x[1]):
-            samples = sample_by_type.get(t) or []
-            if samples:
-                ctx.append(f"- {t}: {cnt}件 (例: {', '.join(samples)})")
-            else:
-                ctx.append(f"- {t}: {cnt}件")
+    # by_type: Dict[str, int] = {}
+    # for n in nodes:
+    #     t = n.get("type") or (n.get("labels") or ["Unknown"])[0]
+    #     by_type[t] = by_type.get(t, 0) + 1
+    # if by_type:
+    #     ctx.append("\nノードタイプ内訳:")
+    #     for t, cnt in sorted(by_type.items(), key=lambda x: -x[1]):
+    #         ctx.append(f"- {t}: {cnt}件")
 
     # Sample edges
+    ctx = []
     if edges:
-        ctx.append("\n関係サンプル:")
+        NUM_EDGES_TO_SHOW = 100
+        ctx.append("\n関係性:")
         node_name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id")}
-        for e in edges[:10]:
+        for e in edges[:NUM_EDGES_TO_SHOW]:
             s = node_name_cache.get(e.get("source"), str(e.get("source")))
             t = node_name_cache.get(e.get("target"), str(e.get("target")))
             rtype = e.get("type", "REL")
@@ -168,13 +171,13 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
 def format_graph_data(graph: Dict[str, Any]) -> str:
     nodes = graph.get("nodes", []) or []
     edges = graph.get("edges", []) or []
-    out = ["取得したグラフデータ:", f"ノード数: {len(nodes)}", f"関係数: {len(edges)}", ""]
-    out.append("ノード一覧(最大50):")
-    for n in nodes[:50]:
-        out.append(f"- {_node_label(n)}")
-    out.append("\n関係(最大50):")
+    out = ["取得したグラフデータ:", ""]
+    # out.append("ノード一覧(最大50):")
+    # for n in nodes[:30]:
+    #     out.append(f"- {_node_label(n)}")
+    out.append("\n関係(最大100件):")
     name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id")}
-    for e in edges[:50]:
+    for e in edges[:100]:
         s = name_cache.get(e.get("source"), e.get("source"))
         t = name_cache.get(e.get("target"), e.get("target"))
         edge_type = e.get("type", "REL")
@@ -221,8 +224,18 @@ def fetch_graph_for_user_input(
     if not nodes:
         # 3. fuzzy search
         fuzzy_res = fuzzy_search(extracted_title)
-        print(f"Fuzzy search results: {json.dumps(fuzzy_res)[:200]}")
-        candidates = fuzzy_res.get("results") or fuzzy_res.get("nodes") or []
+        print(f"Title similarity results: {json.dumps(fuzzy_res)[:200]}")
+        # Tolerant extraction of candidate list across possible response shapes
+        if isinstance(fuzzy_res, list):
+            candidates = fuzzy_res
+        else:
+            candidates = (
+                fuzzy_res.get("results")
+                or fuzzy_res.get("nodes")
+                or fuzzy_res.get("matches")
+                or fuzzy_res.get("items")
+                or []
+            )
         if candidates:
             used_fuzzy = True
             # 4. pick highest similarity
@@ -279,13 +292,15 @@ class GraphRAGRecommender:
         token_callback: optional callable receiving incremental text chunks.
         Returns the full generated text.
         """
-        graph_text = format_graph_data(graph)
+        # graph_text = format_graph_data(graph)
+        graph_text = ""  # omit detailed graph data to save token
         context = build_graph_context(graph)
         prompt_text = self.rec_prompt.format(
             user_query=user_input,
             graph_data=graph_text,
             context=context,
         )
+        print(f"GraphRAG Prompt text:\n{prompt_text}\n")
         body = {
             "text": prompt_text,
             "model": self.model,
