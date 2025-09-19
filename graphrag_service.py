@@ -103,7 +103,7 @@ def extract_formal_title(user_input: str) -> str:
 
 def strict_search(
     title: str,
-    limit: int = 100,
+    limit: int = 30,
     include_related: bool = True,
     include_same_publisher_other_magazines: bool = True,
     same_publisher_other_magazines_limit: int = 5,
@@ -195,14 +195,14 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
     query_work_id = None
     if query_title:
         for nid, name in id_to_name.items():
-            if name == query_title:
+            if name.lower() == query_title.lower():
                 query_work_id = nid
                 break
         # fallback: try properties.title exact match if display name differs
         if query_work_id is None:
             for nid, node in id_to_node.items():
                 props = node.get("properties", {}) or {}
-                if norm(props.get("title") or props.get("name")) == query_title:
+                if norm(props.get("title").lower()) == query_title.lower():
                     query_work_id = nid
                     break
 
