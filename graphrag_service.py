@@ -186,8 +186,12 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
     id_to_name: Dict[Any, str] = {n.get("id"): _node_label(n) for n in nodes if n.get("id") is not None}
     id_to_node: Dict[Any, Dict[str, Any]] = {n.get("id"): n for n in nodes if n.get("id") is not None}
 
-    def norm(s: str) -> str:
-        return (s or "").strip()
+    def norm(s: Any) -> str:
+        """Normalize any value to a trimmed string.
+
+        Ensures downstream .lower() calls are safe even if input is None or non-str.
+        """
+        return str(s or "").strip()
 
     query_title = norm(graph.get("_extracted_title") or "")
 
@@ -195,14 +199,16 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
     query_work_id = None
     if query_title:
         for nid, name in id_to_name.items():
-            if name.lower() == query_title.lower():
+            # guard in case name is not a string
+            if str(name).lower() == query_title.lower():
                 query_work_id = nid
                 break
         # fallback: try properties.title exact match if display name differs
         if query_work_id is None:
             for nid, node in id_to_node.items():
                 props = node.get("properties", {}) or {}
-                if norm(props.get("title").lower()) == query_title.lower():
+                # props.get("title") can be None; normalize before .lower()
+                if norm(props.get("title")).lower() == query_title.lower():
                     query_work_id = nid
                     break
 
@@ -366,9 +372,9 @@ def format_graph_data(graph: Dict[str, Any]) -> str:
     # out.append("ノード一覧(最大50):")
     # for n in nodes[:30]:
     #     out.append(f"- {_node_label(n)}")
-    out.append("\n関係(最大100件):")
+    out.append("\n関係(最大30件):")
     name_cache = {n.get("id"): _node_label(n) for n in nodes if n.get("id")}
-    for e in edges[:100]:
+    for e in edges[:30]:
         s = name_cache.get(e.get("source"), e.get("source"))
         t = name_cache.get(e.get("target"), e.get("target"))
         edge_type = e.get("type", "REL")
