@@ -113,6 +113,37 @@ def stream_generate(text, container, title):
 def main():
     st.title("📚 GraphRAGを使用した生成デモ")
     st.markdown("同じテキストに対して素のLLM（GraphRAGなし）とGraphRAGを使用した生成の結果を比較表示します。")
+    # 右下に小さな「出典」リンク（フローティング）
+    st.markdown(
+        """
+        <style>
+        .floating-citation-link {
+            position: fixed;
+            right: 16px;
+            bottom: 12px;
+            background: rgba(255,255,255,0.85);
+            backdrop-filter: blur(6px);
+            border: 1px solid #e6e6e6;
+            border-radius: 8px;
+            padding: 4px 8px;
+            font-size: 12px;
+            z-index: 9999;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        }
+        .floating-citation-link a {
+            color: #4f46e5;
+            text-decoration: none;
+        }
+        .floating-citation-link a:hover {
+            text-decoration: underline;
+        }
+        </style>
+        <div class="floating-citation-link">
+            🔗 <a href="/source_link" target="_self">出典</a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # 入力欄 + 巻数フィルタ（PCでは横並び 4:1 / モバイルでは自動縦積み）
     st.subheader("🔤 漫画入力とフィルタ")
