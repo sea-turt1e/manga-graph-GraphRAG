@@ -1,2 +1,6 @@
 [theme]
 base="light"
+
+[client]
+# マルチページのデフォルトサイドバー・ナビゲーションを非表示
+showSidebarNavigation = false

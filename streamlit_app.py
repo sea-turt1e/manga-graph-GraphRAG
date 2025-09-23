@@ -14,7 +14,7 @@ from prompts.manga_prompts import StandardMangaPrompts
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide")
+st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 load_dotenv()
 
 # Optional API key for backend

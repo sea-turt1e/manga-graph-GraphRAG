@@ -12,6 +12,8 @@ st.markdown(
   - 独立行政法人国立美術館国立アートリサーチセンター「メディア芸術データベース」（https://mediaarts-db.artmuseums.go.jp/）を加工してデータを作成
 - [OpenBD](https://openbd.jp/)
   - 「OpenBD」 （https://openbd.jp/） を利用しています。
+- [MyAnimeList Dataset](https://www.kaggle.com/datasets/azathoth42/myanimelist)
+  - 本プロジェクトはMyAnimeList Dataset（MyAnimeList.net） のデータを利用しています。データベースは Open Database License (ODbL) v1.0、個々のコンテンツは Database Contents License (DbCL) v1.0 に基づきます。ライセンス条件に従い帰属表示と通知保持を行っています。」
 """
 )
 
