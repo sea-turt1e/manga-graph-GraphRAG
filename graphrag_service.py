@@ -276,10 +276,10 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
         lines.append(f"クエリが掲載された雑誌の出版社: {query_publisher_name}")
 
     # Section A: author's other works
+    other_works: list[str] = []
     if query_author_name:
         # get author's node id via created_edges where source name == author
         author_ids = {e.get("source") for e in created_edges if id_to_name.get(e.get("source")) == query_author_name}
-        other_works: list[str] = []
         for e in created_edges:
             if e.get("source") in author_ids and e.get("target") != query_work_id:
                 wname = id_to_name.get(e.get("target"))
