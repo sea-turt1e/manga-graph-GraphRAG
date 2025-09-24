@@ -168,15 +168,15 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
     クエリが掲載された雑誌: 週刊少年ジャンプ
     クエリが掲載された雑誌の出版社: 集英社
 
-    ## {クエリの作品の作者}の別作品
+    ### {クエリの作品の作者}の別作品
     - てんで性悪キューピッド
     - 幽★遊★白書
 
-    ## 同雑誌の別作品
+    ### 同雑誌の別作品
     - ダンダダン = DAN DA DAN（作者: 龍幸伸、雑誌: 週刊少年ジャンプ、 出版社: 集英社）
     - 神のまにまに（作者: 猗笠怜司、雑誌: 週刊少年ジャンプ、 出版社: 集英社）
 
-    ## 同出版社の他誌に掲載された作品
+    ### 同出版社の他誌に掲載された作品
     - 末永くよろしくお願いします（作者: 池ジュン子、雑誌: 花とゆめ、 出版社: 集英社）
     """
     nodes = graph.get("nodes", []) or []
@@ -286,12 +286,30 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
                 if wname and wname not in other_works:
                     other_works.append(wname)
         lines.append("")
-        lines.append(f"## {query_author_name}の別作品")
+        lines.append(f"### {query_author_name}の別作品")
         if other_works:
-            for t in other_works[:10]:
+            for t in other_works:
                 lines.append(f"- {t}")
         else:
             lines.append("- なし")
+
+    # query_mag_nameが入っていて、かつSection Aでは抽出できなかった作品
+    if query_title:
+        wnames = [
+            g["label"]
+            for g in graph["nodes"]
+            if query_title.lower() in g.get("label", "").lower()
+            and g.get("type") == "work"
+            and g.get("label") not in other_works
+            and g.get("label") != query_title
+        ]
+        if wnames:
+            lines.append("")
+            lines.append(
+                '### 別の作者の作品。ただしスピンオフなどで関係が深い"かもしれない"作品（全くの別作品の可能性あり）'
+            )
+            for t in wnames:
+                lines.append(f"- {t}")
 
     # Section B: same magazine other works
     if query_mag_id is not None:
@@ -302,9 +320,9 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
                 if wid not in same_mag_works:
                     same_mag_works.append(wid)
         lines.append("")
-        lines.append("## 同雑誌の別作品")
+        lines.append("### 同雑誌の別作品")
         if same_mag_works:
-            for wid in same_mag_works[:10]:
+            for wid in same_mag_works:
                 title = id_to_name.get(wid, "")
                 auths = authors_of(wid)
                 author_txt = "、".join(auths) if auths else "不明"
@@ -333,7 +351,7 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
                     other_mag_ids.append(mid)
         # collect works from those magazines
         lines.append("")
-        lines.append("## 同出版社の他誌に掲載された作品")
+        lines.append("### 同出版社の他誌に掲載された作品")
         collected = 0
         for mid in other_mag_ids:
             # works published by this magazine
@@ -357,8 +375,8 @@ def build_graph_context(graph: Dict[str, Any]) -> str:
                     collected += 1
                     if collected >= 10:
                         break
-            if collected >= 10:
-                break
+            # if collected >= 10:
+            #     break
         if collected == 0:
             lines.append("- なし")
 
