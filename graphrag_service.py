@@ -15,11 +15,11 @@ import logging
 import os
 from typing import Any, Callable, Dict, Optional
 
-import requests
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 
 from prompts.manga_prompts import GraphRAGPrompts
+from retry_utils import request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,8 @@ def _auth_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
 def _post_text_generation(prompt: str) -> str:
     body = {**DEFAULT_GEN_BODY, "text": prompt}
     try:
-        r = requests.post(
+        r = request_with_retry(
+            "POST",
             TEXT_GEN_ENDPOINT,
             json=body,
             headers=_auth_headers({"Content-Type": "application/json"}),
@@ -120,7 +121,13 @@ def strict_search(
         "min_total_volumes": min_total_volumes,
     }
     try:
-        r = requests.get(STRICT_SEARCH_ENDPOINT, params=params, headers=_auth_headers(), timeout=60)
+        r = request_with_retry(
+            "GET",
+            STRICT_SEARCH_ENDPOINT,
+            params=params,
+            headers=_auth_headers(),
+            timeout=60,
+        )
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -143,7 +150,13 @@ def fuzzy_search(
         "embedding_method": embedding_method,
     }
     try:
-        r = requests.get(TITLE_SIMILARITY_ENDPOINT, params=params, headers=_auth_headers(), timeout=60)
+        r = request_with_retry(
+            "GET",
+            TITLE_SIMILARITY_ENDPOINT,
+            params=params,
+            headers=_auth_headers(),
+            timeout=60,
+        )
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -550,13 +563,16 @@ class GraphRAGRecommender:
         }
         full_text = ""
         try:
-            with requests.post(
+            # 初回呼び出しで502などの場合に備え、接続確立までリトライ
+            r = request_with_retry(
+                "POST",
                 TEXT_GEN_ENDPOINT,
                 json=body,
                 headers=_auth_headers({"Content-Type": "application/json"}),
                 timeout=180,
                 stream=True,
-            ) as r:
+            )
+            with r:
                 r.raise_for_status()
                 buffer = ""
                 for chunk in r.iter_content(chunk_size=None, decode_unicode=True):

@@ -10,11 +10,14 @@ from dotenv import load_dotenv
 
 from graphrag_service import extract_formal_title, fuzzy_search, run_graphrag_pipeline, strict_search
 from prompts.manga_prompts import StandardMangaPrompts
+from retry_utils import request_with_retry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-st.set_page_config(page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="GraphRAGを使用した生成デモ", page_icon="📚", layout="wide", initial_sidebar_state="collapsed"
+)
 load_dotenv()
 
 # Optional API key for backend
@@ -40,7 +43,26 @@ def stream_generate(text, container, title):
         data = {"text": text, "streaming": "true"}
 
         # ストリーミングレスポンスを処理
-        response = requests.post(url, json=data, headers=headers, stream=True)
+        # 502等が出ることがあるため、接続確立までリトライ
+        # on_retryでUIに起動待ちメッセージを表示
+        def on_retry(ctx: dict):
+            wait = ctx.get("wait")
+            status = ctx.get("status")
+            if status in (502, 503, 504) or status is None:
+                container.info(
+                    f"バックエンド起動待ち中... リトライ{ctx.get('attempt')}回目。"
+                    + (f" 次の試行まで約{wait:.1f}秒" if wait else "")
+                )
+
+        response = request_with_retry(
+            "POST",
+            url,
+            json=data,
+            headers=headers,
+            stream=True,
+            timeout=180,
+            on_retry=on_retry,
+        )
         response.raise_for_status()  # エラーチェック
 
         full_text = ""
@@ -440,7 +462,7 @@ def main():
 
 def check_server_connection(api_base: str):
     try:
-        response = requests.get(f"{api_base}/health", headers=_auth_headers(), timeout=5)
+        response = request_with_retry("GET", f"{api_base}/health", headers=_auth_headers(), timeout=5)
         if response.status_code == 200:
             st.success("✅ APIサーバーに正常に接続できます")
         else:

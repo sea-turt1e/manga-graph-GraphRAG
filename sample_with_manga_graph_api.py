@@ -19,7 +19,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
+
+from retry_utils import request_with_retry
+
+# from langchain_openai import ChatOpenAI  # 未使用のためコメントアウト
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -50,7 +53,14 @@ class MangaGraphClient:
         """Make HTTP request to the API"""
         url = f"{self.base_url}{endpoint}"
         try:
-            response = self.session.request(method=method, url=url, params=params, json=json_data)
+            response = request_with_retry(
+                method,
+                url,
+                session=self.session,
+                params=params,
+                json=json_data,
+                timeout=60,
+            )
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
