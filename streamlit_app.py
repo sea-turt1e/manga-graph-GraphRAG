@@ -91,7 +91,9 @@ def search_vector_similarity(query: str, embedding_type: str = "title_en") -> Di
             timeout=60,
         )
         r.raise_for_status()
-        return r.json()
+        result = r.json()
+        logger.info(f"Vector similarity search ({embedding_type}): {len(result.get('results', []))} results")
+        return result
     except Exception as e:
         logger.warning("Vector similarity search error: %s", e)
         return {}
@@ -142,13 +144,21 @@ def get_publisher_magazines(publisher_node_id: str, limit: int = 3, exclude_maga
 
 def get_magazines_work_graph(magazine_ids: List[str], work_limit: int = 3, reference_work_id: str | None = None) -> Dict[str, Any]:
     """複数雑誌の作品グラフを取得"""
+    # 空の場合は早期リターン
+    if not magazine_ids:
+        logger.warning("get_magazines_work_graph: magazine_ids is empty")
+        return {}
+    
     body = {
-        "magazine_ids": magazine_ids,
+        "magazine_element_ids": magazine_ids,  # APIスキーマに合わせたフィールド名
         "work_limit": work_limit,
         "include_hentai": False,
     }
     if reference_work_id:
         body["reference_work_id"] = reference_work_id
+    
+    logger.info(f"Magazines work graph request body: {body}")
+    
     try:
         r = request_with_retry(
             "POST",
@@ -159,6 +169,14 @@ def get_magazines_work_graph(magazine_ids: List[str], work_limit: int = 3, refer
         )
         r.raise_for_status()
         return r.json()
+    except requests.exceptions.HTTPError as e:
+        # エラーレスポンスの詳細をログ出力
+        try:
+            error_detail = e.response.json()
+            logger.warning("Magazines work graph error: %s - Detail: %s", e, error_detail)
+        except Exception:
+            logger.warning("Magazines work graph error: %s - Response: %s", e, e.response.text)
+        return {}
     except Exception as e:
         logger.warning("Magazines work graph error: %s", e)
         return {}
@@ -256,28 +274,27 @@ def perform_vector_similarity_search(query: str) -> List[Dict[str, Any]]:
     
     # 7. title_en で検索
     result_en = search_vector_similarity(query, embedding_type="title_en")
-    results_en = result_en.get("results", []) or result_en.get("nodes", []) or []
+    results_en = result_en.get("results", []) or []
     for r in results_en:
-        props = r.get("properties", {})
-        # japanese_nameを優先的に使用
-        title = props.get("japanese_name") or r.get("title") or props.get("title") or ""
-        score = r.get("similarity_score") or r.get("score") or 0
+        # APIレスポンスはフラットな構造: title_ja, title_en がトップレベル
+        title = r.get("title_ja") or r.get("title_en") or ""
+        score = r.get("similarity_score") or 0
         if title and title not in [c["title"] for c in candidates]:
             candidates.append({"title": title, "score": score, "source": "title_en"})
     
     # 8. title_ja で検索
     result_ja = search_vector_similarity(query, embedding_type="title_ja")
-    results_ja = result_ja.get("results", []) or result_ja.get("nodes", []) or []
+    results_ja = result_ja.get("results", []) or []
     for r in results_ja:
-        props = r.get("properties", {})
-        # japanese_nameを優先的に使用
-        title = props.get("japanese_name") or r.get("title") or props.get("title") or ""
-        score = r.get("similarity_score") or r.get("score") or 0
+        # APIレスポンスはフラットな構造: title_ja, title_en がトップレベル
+        title = r.get("title_ja") or r.get("title_en") or ""
+        score = r.get("similarity_score") or 0
         if title and title not in [c["title"] for c in candidates]:
             candidates.append({"title": title, "score": score, "source": "title_ja"})
     
     # スコアでソート
     candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+    logger.info(f"Total candidates after vector similarity search: {len(candidates)}")
     return candidates
 
 
@@ -802,7 +819,7 @@ def main():
         cands = st.session_state.get("fuzzy_candidates", [])
         base_query = st.session_state.get("dialog_extracted_title") or st.session_state.get("pending_user_input")
         with right_container:
-            st.subheader("🔎 候補が複数見つかりました")
+            st.subheader("🔎 類似する候補が見つかりました")
             st.write("正しい作品を選んでください。選択後に生成を開始します。")
             st.caption(f"検索語: {base_query}")
             st.caption(f"候補件数: {len(cands)} 件")
@@ -907,8 +924,8 @@ def main():
                                 })
 
                     # 曖昧性の結果に応じて分岐
-                    if len(processed) > 1:
-                        # 9) 2件以上 → ページ内パネルで選択、選択後に生成開始
+                    if len(processed) >= 1:
+                        # 9) 1件以上 → ページ内パネルで選択、選択後に生成開始
                         st.session_state["fuzzy_candidates"] = processed
                         st.session_state["dialog_extracted_title"] = input_text
                         st.session_state["awaiting_candidate_selection"] = True
@@ -919,11 +936,10 @@ def main():
                         st.markdown("---")
                         render_candidate_selector_panel(col2.container())
                         st.stop()
-                    else:
-                        # 候補0/1件 → そのまま生成開始
-                        if processed:
-                            selected_title_for_run = processed[0]["title"]
-                        # 10) 選択された候補でグラフ検索して以降の処理を実行
+                    elif not graph_result.get("nodes"):
+                        # 候補が0件で、グラフ検索でも見つからなかった場合
+                        st.warning("⚠️ 該当する漫画作品が見つかりませんでした。別の検索語をお試しください。")
+                        st.stop()
 
                     run_graphrag_into(
                         col2.container(),
