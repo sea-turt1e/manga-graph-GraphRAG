@@ -185,7 +185,14 @@ def extract_ids_from_graph(graph: Dict[str, Any]) -> Dict[str, Any]:
         if node_type == "work":
             if result["work_id"] is None:
                 result["work_id"] = node_id
-                result["work_title"] = node.get("properties", {}).get("title") or node.get("title") or node.get("label")
+                # japanese_nameを優先的に使用
+                props = node.get("properties", {})
+                result["work_title"] = (
+                    props.get("japanese_name") 
+                    or props.get("title") 
+                    or node.get("title") 
+                    or node.get("label")
+                )
         elif node_type == "author":
             if node_id and node_id not in result["author_ids"]:
                 result["author_ids"].append(node_id)
@@ -197,6 +204,18 @@ def extract_ids_from_graph(graph: Dict[str, Any]) -> Dict[str, Any]:
                 result["publisher_ids"].append(node_id)
     
     return result
+
+
+def get_work_title(node: Dict[str, Any]) -> str:
+    """Workノードから漫画名を取得（japanese_nameを優先）"""
+    props = node.get("properties", {})
+    return (
+        props.get("japanese_name")
+        or props.get("title")
+        or node.get("title")
+        or node.get("label")
+        or ""
+    )
 
 
 def perform_graph_search(query: str) -> tuple[Dict[str, Any], str]:
@@ -239,7 +258,9 @@ def perform_vector_similarity_search(query: str) -> List[Dict[str, Any]]:
     result_en = search_vector_similarity(query, embedding_type="title_en")
     results_en = result_en.get("results", []) or result_en.get("nodes", []) or []
     for r in results_en:
-        title = r.get("title") or r.get("properties", {}).get("title") or ""
+        props = r.get("properties", {})
+        # japanese_nameを優先的に使用
+        title = props.get("japanese_name") or r.get("title") or props.get("title") or ""
         score = r.get("similarity_score") or r.get("score") or 0
         if title and title not in [c["title"] for c in candidates]:
             candidates.append({"title": title, "score": score, "source": "title_en"})
@@ -248,7 +269,9 @@ def perform_vector_similarity_search(query: str) -> List[Dict[str, Any]]:
     result_ja = search_vector_similarity(query, embedding_type="title_ja")
     results_ja = result_ja.get("results", []) or result_ja.get("nodes", []) or []
     for r in results_ja:
-        title = r.get("title") or r.get("properties", {}).get("title") or ""
+        props = r.get("properties", {})
+        # japanese_nameを優先的に使用
+        title = props.get("japanese_name") or r.get("title") or props.get("title") or ""
         score = r.get("similarity_score") or r.get("score") or 0
         if title and title not in [c["title"] for c in candidates]:
             candidates.append({"title": title, "score": score, "source": "title_ja"})
@@ -355,7 +378,7 @@ def build_graph_context_from_extended(extended_info: Dict[str, Any], query_title
         for aw in author_works_list:
             for node in aw.get("nodes", []):
                 if node.get("type", "").lower() == "work":
-                    title = node.get("properties", {}).get("title") or node.get("title") or node.get("label")
+                    title = get_work_title(node)
                     if title and title.lower() != work_title.lower() and title not in work_titles_added:
                         lines.append(f"- {title}")
                         work_titles_added.add(title)
@@ -372,7 +395,7 @@ def build_graph_context_from_extended(extended_info: Dict[str, Any], query_title
             nodes_dict = {n.get("id") or n.get("elementId"): n for n in mw.get("nodes", [])}
             for node in mw.get("nodes", []):
                 if node.get("type", "").lower() == "work":
-                    title = node.get("properties", {}).get("title") or node.get("title") or node.get("label")
+                    title = get_work_title(node)
                     if title and title.lower() != work_title.lower() and title not in work_titles_added:
                         # 作者を探す
                         work_author = "不明"
@@ -398,7 +421,7 @@ def build_graph_context_from_extended(extended_info: Dict[str, Any], query_title
             nodes_dict = {n.get("id") or n.get("elementId"): n for n in omw.get("nodes", [])}
             for node in omw.get("nodes", []):
                 if node.get("type", "").lower() == "work":
-                    title = node.get("properties", {}).get("title") or node.get("title") or node.get("label")
+                    title = get_work_title(node)
                     if title and title.lower() != work_title.lower() and title not in work_titles_added:
                         # 作者と雑誌を探す
                         work_author = "不明"
