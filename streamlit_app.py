@@ -24,11 +24,9 @@ BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "").strip()
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
 # API Endpoints
-GRAPH_SEARCH_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/graph"
-VECTOR_SIMILARITY_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/vector/similarity"
-AUTHOR_WORKS_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/author"
-MAGAZINE_WORKS_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/magazine"
-PUBLISHER_MAGAZINES_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/publisher"
+# 統合API (1-6, 11-13)
+GRAPH_CASCADE_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/graph/cascade"
+RELATED_GRAPHS_BATCH_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/related-graphs/batch"
 MAGAZINES_WORK_GRAPH_ENDPOINT = f"{API_BASE}/api/v1/manga-anime-neo4j/magazines/work-graph"
 TEXT_GEN_ENDPOINT = f"{API_BASE}/text-generation/generate"
 
@@ -44,23 +42,26 @@ def _auth_headers(extra: dict | None = None) -> dict:
 
 
 # =============================================================================
-# Backend API Functions for GraphRAG
+# Backend API Functions for GraphRAG (統合API使用)
 # =============================================================================
 
 
-def search_graph(query: str, lang: str = "japanese", mode: str = "simple", limit: int = 3) -> Dict[str, Any]:
-    """グラフ検索API呼び出し"""
+def search_graph_cascade(query: str, limit: int = 3, languages: str = "japanese,english") -> Dict[str, Any]:
+    """
+    グラフ検索統合API呼び出し (1-6 統合)
+    japanese/simple -> japanese/fulltext -> japanese/ranked -> english/simple -> english/fulltext -> english/ranked
+    を1回のAPI呼び出しで実行
+    """
     params = {
         "q": query,
-        "lang": lang,
-        "mode": mode,
         "limit": limit,
+        "languages": languages,
         "include_hentai": False,
     }
     try:
         r = request_with_retry(
             "GET",
-            GRAPH_SEARCH_ENDPOINT,
+            GRAPH_CASCADE_ENDPOINT,
             params=params,
             headers=_auth_headers(),
             timeout=60,
@@ -68,77 +69,50 @@ def search_graph(query: str, lang: str = "japanese", mode: str = "simple", limit
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        logger.warning("Graph search error: %s", e)
+        logger.warning("Graph cascade search error: %s", e)
         return {}
 
 
-def search_vector_similarity(query: str, embedding_type: str = "title_en") -> Dict[str, Any]:
-    """ベクトル類似検索API呼び出し"""
+def get_related_graphs_batch(
+    author_node_id: str | None = None,
+    magazine_node_id: str | None = None,
+    publisher_node_id: str | None = None,
+    author_limit: int = 5,
+    magazine_limit: int = 5,
+    publisher_limit: int = 3,
+    reference_work_id: str | None = None,
+    exclude_magazine_id: str | None = None,
+) -> Dict[str, Any]:
+    """
+    関連グラフ一括取得API呼び出し (11-13 統合)
+    著者の他作品、雑誌の他作品、出版社の他雑誌を1回のAPI呼び出しで取得
+    """
     body = {
-        "query": query,
-        "embedding_type": embedding_type,
-        "embedding_dims": 256,
-        "limit": 10,
-        "threshold": 0.3,
+        "author_node_id": author_node_id,
+        "magazine_node_id": magazine_node_id,
+        "publisher_node_id": publisher_node_id,
+        "author_limit": author_limit,
+        "magazine_limit": magazine_limit,
+        "publisher_limit": publisher_limit,
         "include_hentai": False,
     }
+    if reference_work_id:
+        body["reference_work_id"] = reference_work_id
+    if exclude_magazine_id:
+        body["exclude_magazine_id"] = exclude_magazine_id
+    
     try:
         r = request_with_retry(
             "POST",
-            VECTOR_SIMILARITY_ENDPOINT,
+            RELATED_GRAPHS_BATCH_ENDPOINT,
             json=body,
             headers=_auth_headers({"Content-Type": "application/json"}),
             timeout=60,
         )
         r.raise_for_status()
-        result = r.json()
-        logger.info(f"Vector similarity search ({embedding_type}): {len(result.get('results', []))} results")
-        return result
-    except Exception as e:
-        logger.warning("Vector similarity search error: %s", e)
-        return {}
-
-
-def get_author_works(author_node_id: str, limit: int = 5) -> Dict[str, Any]:
-    """著者の他作品を取得"""
-    url = f"{AUTHOR_WORKS_ENDPOINT}/{author_node_id}/works"
-    params = {"limit": limit, "include_hentai": False}
-    try:
-        r = request_with_retry("GET", url, params=params, headers=_auth_headers(), timeout=60)
-        r.raise_for_status()
         return r.json()
     except Exception as e:
-        logger.warning("Author works error: %s", e)
-        return {}
-
-
-def get_magazine_works(magazine_node_id: str, limit: int = 5, reference_work_id: str | None = None) -> Dict[str, Any]:
-    """雑誌の他作品を取得"""
-    url = f"{MAGAZINE_WORKS_ENDPOINT}/{magazine_node_id}/works"
-    params = {"limit": limit, "include_hentai": False}
-    if reference_work_id:
-        params["reference_work_id"] = reference_work_id
-    try:
-        r = request_with_retry("GET", url, params=params, headers=_auth_headers(), timeout=60)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        logger.warning("Magazine works error: %s", e)
-        return {}
-
-
-def get_publisher_magazines(publisher_node_id: str, limit: int = 3, exclude_magazine_id: str | None = None) -> Dict[str, Any]:
-    """出版社の他雑誌を取得"""
-    url = f"{PUBLISHER_MAGAZINES_ENDPOINT}/{publisher_node_id}/magazines"
-    params = {"limit": limit, "include_hentai": False}
-    if exclude_magazine_id:
-        params["exclude_magazine_id"] = exclude_magazine_id
-    try:
-        r = request_with_retry("GET", url, params=params, headers=_auth_headers(), timeout=60)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        logger.warning("Publisher magazines error: %s", e)
+        logger.warning("Related graphs batch error: %s", e)
         return {}
 
 
@@ -238,69 +212,23 @@ def get_work_title(node: Dict[str, Any]) -> str:
 
 def perform_graph_search(query: str) -> tuple[Dict[str, Any], str]:
     """
-    グラフ検索を段階的に実行
-    1. japanese/simple -> 2. japanese/fulltext -> 3. japanese/ranked
-    4. english/simple -> 5. english/fulltext -> 6. english/ranked
+    グラフ検索を実行（統合API使用）
+    1-6の検索を1回のAPI呼び出しで実行
     
     Returns: (graph_response, search_mode_used)
     """
-    search_modes = [
-        ("japanese", "simple"),
-        ("japanese", "fulltext"),
-        ("japanese", "ranked"),
-        ("english", "simple"),
-        ("english", "fulltext"),
-        ("english", "ranked"),
-    ]
-    
-    for lang, mode in search_modes:
-        result = search_graph(query, lang=lang, mode=mode, limit=3)
-        nodes = result.get("nodes", []) or []
-        if nodes:
-            logger.info(f"Graph search found results with lang={lang}, mode={mode}")
-            return result, f"{lang}/{mode}"
+    result = search_graph_cascade(query, limit=3, languages="japanese,english")
+    nodes = result.get("nodes", []) or []
+    if nodes:
+        logger.info(f"Graph cascade search found {len(nodes)} nodes")
+        return result, "cascade"
     
     return {}, ""
 
 
-def perform_vector_similarity_search(query: str) -> List[Dict[str, Any]]:
-    """
-    ベクトル類似検索を実行
-    7. title_en -> 8. title_ja
-    
-    Returns: 候補リスト
-    """
-    candidates = []
-    
-    # 7. title_en で検索
-    result_en = search_vector_similarity(query, embedding_type="title_en")
-    results_en = result_en.get("results", []) or []
-    for r in results_en:
-        # APIレスポンスはフラットな構造: title_ja, title_en がトップレベル
-        title = r.get("title_ja") or r.get("title_en") or ""
-        score = r.get("similarity_score") or 0
-        if title and title not in [c["title"] for c in candidates]:
-            candidates.append({"title": title, "score": score, "source": "title_en"})
-    
-    # 8. title_ja で検索
-    result_ja = search_vector_similarity(query, embedding_type="title_ja")
-    results_ja = result_ja.get("results", []) or []
-    for r in results_ja:
-        # APIレスポンスはフラットな構造: title_ja, title_en がトップレベル
-        title = r.get("title_ja") or r.get("title_en") or ""
-        score = r.get("similarity_score") or 0
-        if title and title not in [c["title"] for c in candidates]:
-            candidates.append({"title": title, "score": score, "source": "title_ja"})
-    
-    # スコアでソート
-    candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-    logger.info(f"Total candidates after vector similarity search: {len(candidates)}")
-    return candidates
-
-
 def fetch_extended_graph_info(base_graph: Dict[str, Any]) -> Dict[str, Any]:
     """
-    11-14: 追加のグラフ情報を取得
+    11-13: 追加のグラフ情報を取得（統合API使用）
     11. 著者の他作品
     12. 雑誌の他作品
     13. 出版社の他雑誌
@@ -318,38 +246,49 @@ def fetch_extended_graph_info(base_graph: Dict[str, Any]) -> Dict[str, Any]:
     }
     
     work_id = ids.get("work_id")
+    author_ids = ids.get("author_ids", [])
+    magazine_ids = ids.get("magazine_ids", [])
+    publisher_ids = ids.get("publisher_ids", [])
     
-    # 11. 著者の他作品
-    for author_id in ids.get("author_ids", [])[:2]:  # 最大2著者
-        author_works = get_author_works(author_id, limit=5)
-        if author_works:
-            extended_info["author_works"].append(author_works)
+    # 11-13: 関連グラフを一括取得（統合API）
+    author_node_id = author_ids[0] if author_ids else None
+    magazine_node_id = magazine_ids[0] if magazine_ids else None
+    publisher_node_id = publisher_ids[0] if publisher_ids else None
+    exclude_mag = magazine_ids[0] if magazine_ids else None
     
-    # 12. 雑誌の他作品
-    for magazine_id in ids.get("magazine_ids", [])[:2]:  # 最大2雑誌
-        magazine_works = get_magazine_works(magazine_id, limit=5, reference_work_id=work_id)
-        if magazine_works:
-            extended_info["magazine_works"].append(magazine_works)
+    related_graphs = get_related_graphs_batch(
+        author_node_id=author_node_id,
+        magazine_node_id=magazine_node_id,
+        publisher_node_id=publisher_node_id,
+        author_limit=5,
+        magazine_limit=5,
+        publisher_limit=3,
+        reference_work_id=work_id,
+        exclude_magazine_id=exclude_mag,
+    )
     
-    # 13. 出版社の他雑誌
-    other_magazine_ids = []
-    for publisher_id in ids.get("publisher_ids", [])[:1]:  # 最大1出版社
-        exclude_mag = ids.get("magazine_ids", [None])[0] if ids.get("magazine_ids") else None
-        publisher_mags = get_publisher_magazines(publisher_id, limit=3, exclude_magazine_id=exclude_mag)
-        if publisher_mags:
-            extended_info["publisher_magazines"].append(publisher_mags)
-            # 他雑誌IDを収集
-            for node in publisher_mags.get("nodes", []):
-                if node.get("type", "").lower() == "magazine":
-                    mag_id = node.get("id") or node.get("elementId")
-                    if mag_id and mag_id not in other_magazine_ids:
-                        other_magazine_ids.append(mag_id)
+    # 統合APIの結果を従来の形式に変換
+    if related_graphs.get("author_graph"):
+        extended_info["author_works"].append(related_graphs["author_graph"])
     
-    # 14. 他雑誌の作品グラフ
-    if other_magazine_ids:
-        other_works = get_magazines_work_graph(other_magazine_ids, work_limit=3, reference_work_id=work_id)
-        if other_works:
-            extended_info["other_magazines_works"].append(other_works)
+    if related_graphs.get("magazine_graph"):
+        extended_info["magazine_works"].append(related_graphs["magazine_graph"])
+    
+    if related_graphs.get("publisher_graph"):
+        extended_info["publisher_magazines"].append(related_graphs["publisher_graph"])
+        # 他雑誌IDを収集
+        other_magazine_ids = []
+        for node in related_graphs["publisher_graph"].get("nodes", []):
+            if node.get("type", "").lower() == "magazine":
+                mag_id = node.get("id") or node.get("elementId")
+                if mag_id and mag_id not in other_magazine_ids:
+                    other_magazine_ids.append(mag_id)
+        
+        # 14. 他雑誌の作品グラフ
+        if other_magazine_ids:
+            other_works = get_magazines_work_graph(other_magazine_ids, work_limit=3, reference_work_id=work_id)
+            if other_works:
+                extended_info["other_magazines_works"].append(other_works)
     
     return extended_info
 
@@ -531,33 +470,35 @@ def run_graphrag_pipeline_new(
     selected_title: str | None = None,
 ) -> Dict[str, Any]:
     """
-    新しいGraphRAGパイプライン
-    1-6: グラフ検索
-    7-10: 類似検索（必要な場合）
-    11-14: 拡張グラフ情報取得
+    新しいGraphRAGパイプライン（統合API使用・類似検索削除）
+    1-6: グラフ検索（cascade統合API）
+    11-14: 拡張グラフ情報取得（batch統合API + work-graph）
     15-16: コンテキスト生成とレコメンド生成
+    
+    グラフ検索で見つからなかった場合はエラーを返す
     """
     query = selected_title or user_input
     
-    # 1-6: グラフ検索
+    # 1-6: グラフ検索（統合API）
     base_graph, search_mode = perform_graph_search(query)
     
-    fuzzy_used = False
-    similarity_candidates = []
-    
-    # グラフ検索で見つからなかった場合は類似検索
+    # グラフ検索で見つからなかった場合はエラー
     if not base_graph.get("nodes"):
-        fuzzy_used = True
-        # 7-8: ベクトル類似検索
-        similarity_candidates = perform_vector_similarity_search(query)
-        
-        # 候補がある場合、最上位の候補で再検索
-        if similarity_candidates:
-            best_candidate = similarity_candidates[0]["title"]
-            base_graph, search_mode = perform_graph_search(best_candidate)
-            query = best_candidate
+        return {
+            "extracted_title": query,
+            "fuzzy_used": False,
+            "fuzzy_best_title": None,
+            "user_selected_candidate": selected_title is not None,
+            "search_mode": "",
+            "graph_summary": "",
+            "graph_debug": "",
+            "recommendation": "",
+            "raw_graph": {},
+            "similarity_candidates": [],
+            "not_found": True,  # 検索結果なしフラグ
+        }
     
-    # 11-14: 拡張グラフ情報取得
+    # 11-14: 拡張グラフ情報取得（統合API）
     extended_info = fetch_extended_graph_info(base_graph)
     
     # 15: コンテキスト構築
@@ -568,36 +509,17 @@ def run_graphrag_pipeline_new(
     
     return {
         "extracted_title": query,
-        "fuzzy_used": fuzzy_used,
-        "fuzzy_best_title": similarity_candidates[0]["title"] if similarity_candidates else None,
+        "fuzzy_used": False,
+        "fuzzy_best_title": None,
         "user_selected_candidate": selected_title is not None,
         "search_mode": search_mode,
         "graph_summary": context,
         "graph_debug": json.dumps(extended_info, ensure_ascii=False, indent=2)[:2000],
         "recommendation": recommendation,
         "raw_graph": base_graph,
-        "similarity_candidates": similarity_candidates,
+        "similarity_candidates": [],
+        "not_found": False,
     }
-
-
-def get_similarity_candidates_for_selection(query: str) -> List[Dict[str, Any]]:
-    """UI用: 類似検索の候補を取得"""
-    # まずグラフ検索を試す
-    base_graph, _ = perform_graph_search(query)
-    if base_graph.get("nodes"):
-        return []  # グラフで見つかった場合は候補選択不要
-    
-    # 類似検索
-    candidates = perform_vector_similarity_search(query)
-    processed = []
-    for c in candidates[:10]:
-        score_percent = c.get("score", 0) * 100
-        processed.append({
-            "title": c["title"],
-            "score": c.get("score", 0),
-            "display": f"{c['title']} (類似度: {score_percent:.1f}%)",
-        })
-    return processed
 
 
 def stream_generate(text, container, title):
@@ -787,21 +709,23 @@ def main():
                         token_callback=on_token,
                         selected_title=selected_title,
                     )
-                    reco_placeholder.markdown(result["recommendation"])
-                    with st.expander("抽出・検索メタ情報"):
-                        st.write(
-                            {
-                                "extracted_title": result.get("extracted_title"),
-                                "search_mode": result.get("search_mode"),
-                                "fuzzy_used": result.get("fuzzy_used"),
-                                "fuzzy_best_title": result.get("fuzzy_best_title"),
-                                "user_selected_candidate": result.get("user_selected_candidate"),
-                                "node_count": len(result.get("raw_graph", {}).get("nodes", []) or []),
-                                "relationship_count": len(result.get("raw_graph", {}).get("edges", []) or []),
-                            }
-                        )
-                        st.caption("グラフコンテキスト")
-                        st.text(result.get("graph_summary"))
+                    
+                    # 検索結果が見つからなかった場合
+                    if result.get("not_found"):
+                        reco_placeholder.warning("検索結果が見つかりませんでした。別のキーワードをお試しください。")
+                    else:
+                        reco_placeholder.markdown(result["recommendation"])
+                        with st.expander("抽出・検索メタ情報"):
+                            st.write(
+                                {
+                                    "extracted_title": result.get("extracted_title"),
+                                    "search_mode": result.get("search_mode"),
+                                    "node_count": len(result.get("raw_graph", {}).get("nodes", []) or []),
+                                    "relationship_count": len(result.get("raw_graph", {}).get("edges", []) or []),
+                                }
+                            )
+                            st.caption("グラフコンテキスト")
+                            st.text(result.get("graph_summary"))
                 except ValueError as e:
                     st.error(str(e))
                 except Exception as e:  # noqa: BLE001
@@ -814,70 +738,7 @@ def main():
         status_text.empty()
         st.success("✅ 生成が完了しました！")
 
-    # インライン（ページ内）候補選択パネル
-    def render_candidate_selector_panel(right_container):  # uses session_state
-        cands = st.session_state.get("fuzzy_candidates", [])
-        base_query = st.session_state.get("dialog_extracted_title") or st.session_state.get("pending_user_input")
-        with right_container:
-            st.subheader("🔎 類似する候補が見つかりました")
-            st.write("正しい作品を選んでください。選択後に生成を開始します。")
-            st.caption(f"検索語: {base_query}")
-            st.caption(f"候補件数: {len(cands)} 件")
-
-            if not cands:
-                st.info("候補が見つかりませんでした。検索条件を変えてお試しください。")
-                return
-
-            options = [c["display"] for c in cands]
-            idx = st.radio(
-                "候補",
-                options=range(len(options)),
-                format_func=lambda i: options[i],
-                index=0,
-                key="cand_idx",
-            )
-            cols = st.columns([1, 1])
-            with cols[0]:
-                if st.button("この作品で生成する", type="primary"):
-                    chosen = cands[idx]
-                    st.session_state["chosen_title"] = chosen["title"]
-                    st.session_state["awaiting_candidate_selection"] = False
-                    st.session_state["start_generation"] = True
-                    st.rerun()
-            with cols[1]:
-                if st.button("上位候補で生成"):
-                    # 上位候補または抽出タイトルで続行
-                    fallback = cands[0]["title"] if cands else (st.session_state.get("dialog_extracted_title") or "")
-                    st.session_state["chosen_title"] = fallback
-                    st.session_state["awaiting_candidate_selection"] = False
-                    st.session_state["start_generation"] = True
-                    st.rerun()
-
-    # 旧フラグ（モーダル用）が残っていれば新フラグに移行
-    if st.session_state.get("open_candidate_dialog"):
-        st.session_state["awaiting_candidate_selection"] = True
-        del st.session_state["open_candidate_dialog"]
-
-    # 選択待ちなら、生LLM結果を左に保持表示しつつ、候補選択パネルを出す（GraphRAGは未実行）
-    if st.session_state.get("awaiting_candidate_selection"):
-        st.markdown("---")
-        st.subheader("📊 生成結果の比較")
-        col1, col2 = st.columns(2)
-        with col1.container():
-            st.subheader("💬 素のLLM（GraphRAGなし）")
-            raw_out = st.session_state.get("raw_llm_output")
-            if raw_out:
-                st.markdown(raw_out)
-            else:
-                st.info("素のLLMの結果はここに表示されます。")
-        with col2.container():
-            st.subheader("🕸️ GraphRAGを使用した生成")
-            st.info("候補を選択するとGraphRAGの生成を開始します。")
-        st.markdown("---")
-        render_candidate_selector_panel(col2.container())
-        st.stop()
-
-    # 実行ボタン押下時の処理（まず素のLLM→その後にグラフ検索/類似検索→必要なら候補選択→GraphRAG）
+    # 実行ボタン押下時の処理（素のLLM→GraphRAG、類似検索は削除）
     if st.button("🚀 生成開始", type="primary", use_container_width=True):
         if not input_text.strip():
             st.warning("⚠️ テキストを入力してください。")
@@ -895,102 +756,17 @@ def main():
                         prompt = get_standard_recommend_prompt(input_text)
                         stream_generate(prompt, col1, "💬 素のLLM（GraphRAGなし）")
 
-                # 曖昧性解消（候補選択）を完了させる。解決後に生成を開始する。
-                # スピナーと結果UIは右カラムに表示
-                with col2.container():
-                    with st.spinner("グラフから漫画名を検索中..."):
-                        # 1-6) グラフ検索を段階的に実行
-                        graph_result, search_mode = perform_graph_search(input_text)
-
-                        selected_title_for_run: str | None = None
-                        processed = []
-                        
-                        if graph_result.get("nodes"):
-                            # グラフ検索で見つかった
-                            selected_title_for_run = None  # 入力テキストでそのまま実行
-                        else:
-                            # 7-8) ベクトル類似検索
-                            st.markdown(
-                                "🔍 **:red[一致する漫画作品が見つからなかったため、近そうな漫画作品名をリストアップします。]**"
-                            )
-                            candidates = perform_vector_similarity_search(input_text)
-                            
-                            for c in candidates[:10]:
-                                score_percent = c.get("score", 0) * 100
-                                processed.append({
-                                    "title": c["title"],
-                                    "score": c.get("score", 0),
-                                    "display": f"{c['title']} (類似度: {score_percent:.1f}%)",
-                                })
-
-                    # 曖昧性の結果に応じて分岐
-                    if len(processed) >= 1:
-                        # 9) 1件以上 → ページ内パネルで選択、選択後に生成開始
-                        st.session_state["fuzzy_candidates"] = processed
-                        st.session_state["dialog_extracted_title"] = input_text
-                        st.session_state["awaiting_candidate_selection"] = True
-                        st.session_state["pending_user_input"] = input_text
-                        st.session_state["pending_min_vol"] = int(min_vol)
-                        st.session_state["pending_show_raw_llm"] = bool(show_raw_llm)
-                        # 現在のランで右カラムにパネル表示へ移行
-                        st.markdown("---")
-                        render_candidate_selector_panel(col2.container())
-                        st.stop()
-                    elif not graph_result.get("nodes"):
-                        # 候補が0件で、グラフ検索でも見つからなかった場合
-                        st.warning("⚠️ 該当する漫画作品が見つかりませんでした。別の検索語をお試しください。")
-                        st.stop()
-
-                    run_graphrag_into(
-                        col2.container(),
-                        status_text,
-                        progress_bar,
-                        input_text,
-                        int(min_vol),
-                        selected_title=selected_title_for_run,
-                    )
+                # GraphRAGパイプラインを実行
+                run_graphrag_into(
+                    col2.container(),
+                    status_text,
+                    progress_bar,
+                    input_text,
+                    int(min_vol),
+                    selected_title=None,
+                )
             except Exception as e:
                 st.error(f"前処理中にエラーが発生しました: {e}")
-
-    # 選択後に自動実行（左に素のLLM結果を再掲）
-    if st.session_state.get("start_generation"):
-        # 選択後は比較表示を再構築して生成
-        st.markdown("---")
-        st.subheader("📊 生成結果の比較")
-        col1, col2 = st.columns(2)
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        # 左に保存済みの素のLLM結果を表示（再リクエストはしない）
-        with col1.container():
-            st.subheader("💬 素のLLM（GraphRAGなし）")
-            raw_out = st.session_state.get("raw_llm_output")
-            if raw_out:
-                st.markdown(raw_out)
-            else:
-                st.info("素のLLMの結果はここに表示されます。")
-
-        run_graphrag_into(
-            col2.container(),
-            status_text,
-            progress_bar,
-            st.session_state.get("pending_user_input", input_text),
-            st.session_state.get("pending_min_vol", int(min_vol)),
-            selected_title=st.session_state.get("chosen_title"),
-        )
-        # 後片付け（モーダルを閉じたままに）
-        for k in [
-            "fuzzy_candidates",
-            "dialog_extracted_title",
-            "awaiting_candidate_selection",
-            "pending_user_input",
-            "pending_min_vol",
-            "pending_show_raw_llm",
-            "chosen_title",
-            "start_generation",
-        ]:
-            if k in st.session_state:
-                del st.session_state[k]
 
     # APIサーバーの状態チェック
     st.markdown("---")
