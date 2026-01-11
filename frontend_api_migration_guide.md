@@ -117,7 +117,7 @@ const enResponse = await fetch('/api/v1/manga-anime-neo4j/vector/similarity', {
   body: JSON.stringify({
     query: userInput,
     embedding_type: 'title_en',
-    embedding_dims: 256,
+    embedding_dims: 128,
     limit: 10,
     threshold: 0.3,
     include_hentai: false
@@ -131,7 +131,7 @@ const jaResponse = await fetch('/api/v1/manga-anime-neo4j/vector/similarity', {
   body: JSON.stringify({
     query: userInput,
     embedding_type: 'title_ja',
-    embedding_dims: 256,
+    embedding_dims: 128,
     limit: 10,
     threshold: 0.3,
     include_hentai: false
@@ -153,7 +153,7 @@ const response = await fetch('/api/v1/manga-anime-neo4j/vector/similarity/multi'
   body: JSON.stringify({
     query: userInput,
     embedding_types: ['title_en', 'title_ja'],
-    embedding_dims: 256,
+    embedding_dims: 128,
     limit: 10,
     threshold: 0.3,
     include_hentai: false
@@ -173,7 +173,7 @@ showMangaSelectionPopup(data.results);
 |------------|------|------------|------|
 | `query` | string | (必須) | 検索クエリテキスト |
 | `embedding_types` | string[] | `["title_en", "title_ja"]` | 検索対象の埋め込みタイプ |
-| `embedding_dims` | number | `256` | 埋め込み次元数 |
+| `embedding_dims` | number | `128` | 埋め込み次元数 |
 | `limit` | number | `10` | 返却件数 |
 | `threshold` | number | `0.3` | 類似度閾値 |
 | `include_hentai` | boolean | `false` | Hentaiを含めるか |
@@ -204,7 +204,7 @@ showMangaSelectionPopup(data.results);
   "total": 2,
   "query": "呪術廻戦",
   "embedding_types": ["title_en", "title_ja"],
-  "embedding_dims": 256,
+  "embedding_dims": 128,
   "threshold": 0.3
 }
 ```
@@ -361,7 +361,7 @@ async function generateRecommendation(userInput: string): Promise<void> {
         body: JSON.stringify({
           query: userInput,
           embedding_types: ['title_en', 'title_ja'],
-          embedding_dims: 256,
+          embedding_dims: 128,
           limit: 10,
           threshold: 0.3,
           include_hentai: false

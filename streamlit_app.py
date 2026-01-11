@@ -134,7 +134,7 @@ def search_vector_similarity_multi(
     body = {
         "query": query,
         "embedding_types": embedding_types,
-        "embedding_dims": 256,
+        "embedding_dims": 128,
         "limit": limit,
         "threshold": threshold,
         "include_hentai": False,
